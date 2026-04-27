@@ -4805,6 +4805,22 @@ cmd_more_file:
         mov eax, [cmd_flag_num]
         mov [.more_page], eax
 .more_default_page:
+        ; If no filename argument, try stdin (pipe input)
+        push esi
+        call skip_spaces
+        cmp byte [esi], 0
+        pop esi
+        jne .more_from_file
+        call shell_use_stdin_as_input
+        jc .more_usage
+        ; ECX = byte count returned by shell_use_stdin_as_input
+        jmp .more_size_ok
+.more_usage:
+        mov esi, msg_more_usage
+        call vga_print
+        popad
+        ret
+.more_from_file:
         mov edi, PROGRAM_BASE   ; Use program area as temp buffer
         call hbfs_read_file
         jc .more_not_found
@@ -6043,7 +6059,7 @@ shell_execute_pipeline:
 .pipe_len_ok:
         mov [pipe_input_len], eax
         mov byte [redir_out_buf + eax], 0
-        mov esi, redir_out_name
+        mov esi, redir_out_buf
         mov edi, redir_in_buf
         mov ecx, eax
         rep movsb

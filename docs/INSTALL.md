@@ -301,10 +301,10 @@ Mellivora_OS/
 ├── kernel.asm              Kernel entry and include graph (main file + 13 include modules)
 ├── Makefile                Build system
 ├── populate.py             HBFS image populator with subdirectory support
-├── CHANGELOG.md            Version history (v1.0 → v1.15)
+├── CHANGELOG.md            Version history (current: v7.0.0)
 ├── README.md               Project overview
 │
-├── programs/               User-space assembly programs (176 total)
+├── programs/               User-space assembly programs (~290 total)
 │   ├── syscalls.inc        Shared constants and helpers
 │   ├── hello.asm           ... through ...
 │   └── wc.asm

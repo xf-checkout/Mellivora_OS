@@ -611,25 +611,24 @@ lesson_table:
         dd les_a6, les_a7, les_a8, les_a9, les_a10
 
 ; ═════════════════════════════════════════════════════════════
-; BSS SECTION
+; ZERO-INITIALIZED STORAGE (was `section .bss`; flat binaries don't
+; get a runtime BSS segment, so all storage must be inline.)
 ; ═════════════════════════════════════════════════════════════
 
-section .bss
+difficulty:      dd 0
+lesson_num:      dd 0
+input_pos:       dd 0
+error_count:     dd 0
+text_len:        dd 0
+start_ticks:     dd 0
+end_ticks:       dd 0
+elapsed_ticks:   dd 0
+lesson_wpm:      dd 0
+lesson_accuracy: dd 0
 
-difficulty:     resd 1
-lesson_num:     resd 1
-input_pos:      resd 1
-error_count:    resd 1
-text_len:       resd 1
-start_ticks:    resd 1
-end_ticks:      resd 1
-elapsed_ticks:  resd 1
-lesson_wpm:     resd 1
-lesson_accuracy: resd 1
+total_chars:     dd 0
+total_errors:    dd 0
+total_wpm:       dd 0
+lessons_done:    dd 0
 
-total_chars:    resd 1
-total_errors:   resd 1
-total_wpm:      resd 1
-lessons_done:   resd 1
-
-input_buf:      resb MAX_INPUT
+input_buf:       times MAX_INPUT db 0

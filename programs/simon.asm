@@ -1,77 +1,174 @@
-; simon.asm - Simon Says memory game for Mellivora OS
-; Watch the sequence, then repeat it. Grows longer each round.
-; Colors: R=Red, G=Green, B=Blue, Y=Yellow
-;
-; Controls: R/G/B/Y keys. Q to quit.
+; simon.asm - Simon Says VBE graphics game for Mellivora OS
+; Watch the flashing colour sequence, then repeat it using the mouse
+; or keys R/G/B/Y.  Sequence grows by one each round.
 
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/highscore.inc"
+%include "lib/audio.inc"
 
 MAX_SEQ         equ 100
-FLASH_TIME      equ 30          ; ticks per flash
-PAUSE_TIME      equ 15          ; ticks between flashes
+
+; Button quadrant layout (two wide x two tall, leaving thin gap)
+GAP             equ 6
+BTN_W           equ (320 - GAP)    ; 314
+BTN_H           equ (240 - GAP)    ; 234
+
+; Pixel positions of each quadrant (index 0-3)
+; 0=Red TL, 1=Green TR, 2=Blue BL, 3=Yellow BR
+BTN0_X equ 0
+BTN0_Y equ 0
+BTN1_X equ (320 + GAP)
+BTN1_Y equ 0
+BTN2_X equ 0
+BTN2_Y equ (240 + GAP)
+BTN3_X equ (320 + GAP)
+BTN3_Y equ (240 + GAP)
+
+; Dark colours
+COL_RED_D    equ 0x00880000
+COL_GRN_D    equ 0x00008800
+COL_BLU_D    equ 0x00000088
+COL_YEL_D    equ 0x00888800
+; Bright colours
+COL_RED_B    equ 0x00FF4444
+COL_GRN_B    equ 0x0044FF44
+COL_BLU_B    equ 0x004444FF
+COL_YEL_B    equ 0x00FFFF44
+; UI
+COL_GAP      equ 0x00111111
+COL_TEXT     equ 0x00FFFFFF
+
+; States
+ST_SHOW      equ 0    ; computer showing sequence
+ST_INPUT     equ 1    ; player's turn
+ST_CORRECT   equ 2    ; brief pause after correct
+ST_GAMEOVER  equ 3
+
+; Beep frequencies for each colour
+BEEP_RED     equ 262
+BEEP_GRN     equ 330
+BEEP_BLU     equ 392
+BEEP_YEL     equ 523
+FLASH_TICKS  equ 25
+PAUSE_TICKS  equ 12
 
 start:
-        mov eax, SYS_CLEAR
-        int 0x80
+        VBE_GAME_INIT
         call init_game
 
-.round_loop:
-        ; Add one to sequence
-        call add_to_sequence
-        ; Show sequence
+.main_loop:
+        cmp byte [gstate], ST_SHOW
+        je  .do_show
+        cmp byte [gstate], ST_CORRECT
+        je  .do_correct
+        ; ST_INPUT or ST_GAMEOVER: poll events
+        jmp .poll
+
+.do_show:
         call show_sequence
-        ; Player repeats
-        call player_input
-        cmp byte [failed], 1
-        je .game_over
+        mov  byte [input_pos], 0
+        mov  byte [gstate], ST_INPUT
+        jmp  .main_loop
 
-        ; Level up
-        call show_correct
-        mov eax, SYS_SLEEP
-        mov ebx, 40
-        int 0x80
-        jmp .round_loop
+.do_correct:
+        call draw_board_all_dark
+        VBE_GAME_PRESENT
+        mov  eax, SYS_SLEEP
+        mov  ebx, 20
+        int  0x80
+        call add_to_sequence
+        mov  byte [gstate], ST_SHOW
+        jmp  .main_loop
 
-.game_over:
-        call draw_board
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0C
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_wrong
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_score
-        int 0x80
-        mov eax, [seq_len]
-        dec eax                 ; score = length - 1 (failed on this one)
-        cmp eax, 0
-        jge .so_ok
-        xor eax, eax
-.so_ok:
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
+.poll:
+        call draw_board_all_dark
+        VBE_GAME_PRESENT
 
-        mov eax, SYS_PRINT
-        mov ebx, msg_restart
-        int 0x80
-.go_key:
-        mov eax, SYS_GETCHAR
-        int 0x80
-        cmp al, 'r'
-        je start
-        cmp al, 'R'
-        je start
-        cmp al, 'q'
-        je .quit
-        cmp al, 'Q'
-        je .quit
-        jmp .go_key
+        ; Check keyboard
+        VBE_GAME_POLL_KEY
+        cmp  eax, -1
+        jne  .check_key
+
+        ; Check mouse button
+        mov  eax, SYS_MOUSE
+        int  0x80
+        ; EAX=x, EBX=y, ECX=buttons
+        test ecx, 1
+        jz   .poll
+        ; debounce: wait for release
+        call wait_mouse_release
+        ; determine which button was clicked
+        call coord_to_button        ; EBX=x, ECX=y → EAX=0-3 or -1
+        cmp  eax, -1
+        je   .poll
+        jmp  .handle_input
+
+.check_key:
+        cmp  byte [gstate], ST_GAMEOVER
+        jne  .ck_play
+        ; any key restarts
+        cmp  eax, KEY_Q
+        je   .quit
+        cmp  eax, 'Q'
+        je   .quit
+        cmp  eax, KEY_ESC
+        je   .quit
+        call init_game
+        jmp  .main_loop
+.ck_play:
+        cmp  eax, KEY_ESC
+        je   .quit
+        cmp  eax, KEY_Q
+        je   .quit
+        cmp  eax, 'Q'
+        je   .quit
+        ; R='r'→0, G='g'→1, B='b'→2, Y='y'→3
+        cmp  eax, 'r'
+        je   .kred
+        cmp  eax, 'g'
+        je   .kgrn
+        cmp  eax, 'b'
+        je   .kblu
+        cmp  eax, 'y'
+        je   .kyel
+        jmp  .poll
+.kred: mov eax, 0
+        jmp .handle_input
+.kgrn: mov eax, 1
+        jmp .handle_input
+.kblu: mov eax, 2
+        jmp .handle_input
+.kyel: mov eax, 3
+
+.handle_input:
+        cmp  byte [gstate], ST_INPUT
+        jne  .poll
+        ; Flash the button
+        push eax
+        call flash_button       ; EAX=btn index
+        pop  eax
+        ; check against sequence
+        movzx ecx, byte [input_pos]
+        cmp  al, [sequence + ecx]
+        jne  .wrong
+        inc  byte [input_pos]
+        movzx ecx, byte [input_pos]
+        cmp  ecx, [seq_len]
+        jl   .poll
+        ; completed round
+        mov  byte [gstate], ST_CORRECT
+        jmp  .main_loop
+.wrong:
+        mov  byte [gstate], ST_GAMEOVER
+        call draw_gameover
+        VBE_GAME_PRESENT
+        jmp  .poll
 
 .quit:
-        mov eax, SYS_CLEAR
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
         mov eax, SYS_EXIT
         xor ebx, ebx
@@ -81,388 +178,341 @@ start:
 init_game:
         pushad
         mov dword [seq_len], 0
-        mov byte [failed], 0
-        ; Seed RNG
+        mov byte  [gstate], ST_SHOW
+        mov byte  [input_pos], 0
+        mov byte  [go_played], 0
+        mov esi, hs_name_simon
+        call hs_load
+        mov [hi_score], eax
         mov eax, SYS_GETTIME
         int 0x80
         mov [rng], eax
+        call add_to_sequence
         popad
         ret
 
 ;---------------------------------------
 add_to_sequence:
         pushad
-        ; Generate random 0-3
         mov eax, [rng]
-        imul eax, eax, 1103515245
-        add eax, 12345
-        mov [rng], eax
-        shr eax, 16
-        and eax, 3              ; 0-3
-
-        mov ecx, [seq_len]
-        cmp ecx, MAX_SEQ
-        jge .ats_done
-        mov [sequence + ecx], al
-        inc dword [seq_len]
+        imul eax, 1103515245
+        add  eax, 12345
+        mov  [rng], eax
+        shr  eax, 16
+        and  eax, 3
+        mov  ecx, [seq_len]
+        cmp  ecx, MAX_SEQ
+        jge  .ats_done
+        mov  [sequence + ecx], al
+        inc  dword [seq_len]
 .ats_done:
+        popad
+        ret
+
+;---------------------------------------
+; coord_to_button: EBX=x, ECX=y → EAX = button index (0-3) or -1
+coord_to_button:
+        pushad
+        mov  eax, -1
+        ; ignore clicks in the gap
+        cmp  ebx, BTN_W
+        jle  .ctb_check_lr
+        cmp  ebx, 320 + GAP
+        jl   .ctb_done          ; in gap
+
+.ctb_check_lr:
+        cmp  ecx, BTN_H
+        jle  .ctb_top
+        cmp  ecx, 240 + GAP
+        jl   .ctb_done          ; in gap
+        ; bottom half
+        cmp  ebx, 320
+        jl   .ctb_bl
+        mov  eax, 3             ; Yellow BR
+        jmp  .ctb_done
+.ctb_bl:
+        mov  eax, 2             ; Blue BL
+        jmp  .ctb_done
+.ctb_top:
+        ; top half
+        cmp  ebx, 320
+        jl   .ctb_tl
+        mov  eax, 1             ; Green TR
+        jmp  .ctb_done
+.ctb_tl:
+        mov  eax, 0             ; Red TL
+.ctb_done:
+        mov  [esp + 28], eax
+        popad
+        ret
+
+;---------------------------------------
+; draw_board_all_dark - draw all 4 buttons in dark state
+draw_board_all_dark:
+        pushad
+        ; Gap background
+        mov  edx, COL_GAP
+        call vbe_clear_screen
+        ; Draw 4 dark panels
+        mov  ebx, BTN0_X
+        mov  ecx, BTN0_Y
+        mov  edx, BTN_W
+        mov  esi, BTN_H
+        mov  edi, COL_RED_D
+        call vbe_fill_rect
+
+        mov  ebx, BTN1_X
+        mov  ecx, BTN1_Y
+        mov  edx, BTN_W
+        mov  esi, BTN_H
+        mov  edi, COL_GRN_D
+        call vbe_fill_rect
+
+        mov  ebx, BTN2_X
+        mov  ecx, BTN2_Y
+        mov  edx, BTN_W
+        mov  esi, BTN_H
+        mov  edi, COL_BLU_D
+        call vbe_fill_rect
+
+        mov  ebx, BTN3_X
+        mov  ecx, BTN3_Y
+        mov  edx, BTN_W
+        mov  esi, BTN_H
+        mov  edi, COL_YEL_D
+        call vbe_fill_rect
+
+        ; Round counter — dark panel behind text, scale 2
+        mov  ebx, 242
+        mov  ecx, 105
+        mov  edx, 156
+        mov  esi, 24
+        mov  edi, 0x00222222
+        call vbe_fill_rect
+        mov  ebx, 248
+        mov  ecx, 109
+        mov  edx, str_round
+        mov  esi, 0x00AAAAAA
+        mov  eax, 2
+        call vbe_draw_str
+        ; "ROUND " = 6 chars × 12px/char = 72px → number at x=248+72=320
+        mov  ebx, 320
+        mov  ecx, 109
+        mov  edx, [seq_len]
+        mov  esi, 0x00FFFFFF
+        mov  eax, 2
+        call vbe_draw_num
+
+        ; Key hints
+        mov  ebx, 60
+        mov  ecx, 100
+        mov  edx, str_r
+        mov  esi, COL_RED_B
+        mov  eax, 1
+        call vbe_draw_str
+
+        mov  ebx, 380
+        mov  ecx, 100
+        mov  edx, str_g
+        mov  esi, COL_GRN_B
+        mov  eax, 1
+        call vbe_draw_str
+
+        mov  ebx, 60
+        mov  ecx, 340
+        mov  edx, str_b
+        mov  esi, COL_BLU_B
+        mov  eax, 1
+        call vbe_draw_str
+
+        mov  ebx, 380
+        mov  ecx, 340
+        mov  edx, str_y
+        mov  esi, COL_YEL_B
+        mov  eax, 1
+        call vbe_draw_str
+
+        popad
+        ret
+
+;---------------------------------------
+; draw_button_bright: EAX = button index
+draw_button_bright:
+        pushad
+        ; look up coords and bright colour
+        cmp  eax, 0
+        jne  .db1
+        mov  ebx, BTN0_X
+        mov  ecx, BTN0_Y
+        mov  edi, COL_RED_B
+        jmp  .db_draw
+.db1:   cmp  eax, 1
+        jne  .db2
+        mov  ebx, BTN1_X
+        mov  ecx, BTN1_Y
+        mov  edi, COL_GRN_B
+        jmp  .db_draw
+.db2:   cmp  eax, 2
+        jne  .db3
+        mov  ebx, BTN2_X
+        mov  ecx, BTN2_Y
+        mov  edi, COL_BLU_B
+        jmp  .db_draw
+.db3:   mov  ebx, BTN3_X
+        mov  ecx, BTN3_Y
+        mov  edi, COL_YEL_B
+.db_draw:
+        mov  edx, BTN_W
+        mov  esi, BTN_H
+        call vbe_fill_rect
+        popad
+        ret
+
+;---------------------------------------
+; flash_button: EAX = button index — flash bright then dark with beep
+flash_button:
+        pushad
+        call draw_board_all_dark
+        call draw_button_bright     ; EAX still valid (pushad saves old)
+        VBE_GAME_PRESENT
+
+        ; beep
+        push eax
+        mov  ecx, eax
+        mov  eax, SYS_BEEP
+        mov  ebx, [beep_freq + ecx * 4]
+        mov  ecx, 120
+        int  0x80
+        pop  eax
+
+        mov  eax, SYS_SLEEP
+        mov  ebx, FLASH_TICKS
+        int  0x80
+
+        call draw_board_all_dark
+        VBE_GAME_PRESENT
+
+        mov  eax, SYS_SLEEP
+        mov  ebx, PAUSE_TICKS
+        int  0x80
         popad
         ret
 
 ;---------------------------------------
 show_sequence:
         pushad
-        call draw_board
-        mov eax, SYS_SLEEP
-        mov ebx, 30
-        int 0x80
+        call draw_board_all_dark
+        VBE_GAME_PRESENT
+        mov  eax, SYS_SLEEP
+        mov  ebx, 30
+        int  0x80
 
-        xor ecx, ecx
+        xor  ecx, ecx
 .ss_loop:
-        cmp ecx, [seq_len]
-        jge .ss_done
-
+        cmp  ecx, [seq_len]
+        jge  .ss_done
         push ecx
         movzx eax, byte [sequence + ecx]
-        call flash_color
-        pop ecx
-
-        ; Pause between flashes
-        push ecx
-        mov eax, SYS_SLEEP
-        mov ebx, PAUSE_TIME
-        int 0x80
-        pop ecx
-
-        inc ecx
-        jmp .ss_loop
+        call flash_button
+        pop  ecx
+        inc  ecx
+        jmp  .ss_loop
 .ss_done:
-        call draw_board
+        call draw_board_all_dark
+        VBE_GAME_PRESENT
         popad
         ret
 
 ;---------------------------------------
-flash_color:
-        ; EAX = color index (0-3)
-        pushad
-        mov [flash_idx], eax
-        call draw_board_flash
-        ; Beep for color
-        mov ecx, [flash_idx]
-        mov eax, SYS_BEEP
-        mov ebx, [beep_freq + ecx * 4]
-        mov ecx, 150            ; duration
-        int 0x80
-
-        mov eax, SYS_SLEEP
-        mov ebx, FLASH_TIME
-        int 0x80
-        call draw_board
-        popad
-        ret
-
-;---------------------------------------
-player_input:
-        pushad
-        mov byte [failed], 0
-        xor ecx, ecx           ; current position in sequence
-
-.pi_loop:
-        cmp ecx, [seq_len]
-        jge .pi_done
-
-        ; Wait for valid key
-.pi_key:
-        push ecx
-        mov eax, SYS_GETCHAR
-        int 0x80
-        pop ecx
-        cmp al, 'r'
-        je .pi_red
-        cmp al, 'R'
-        je .pi_red
-        cmp al, 'g'
-        je .pi_green
-        cmp al, 'G'
-        je .pi_green
-        cmp al, 'b'
-        je .pi_blue
-        cmp al, 'B'
-        je .pi_blue
-        cmp al, 'y'
-        je .pi_yellow
-        cmp al, 'Y'
-        je .pi_yellow
-        cmp al, 'q'
-        je .pi_quit
-        cmp al, 'Q'
-        je .pi_quit
-        jmp .pi_key
-
-.pi_red:
-        mov eax, 0
-        jmp .pi_check
-.pi_green:
-        mov eax, 1
-        jmp .pi_check
-.pi_blue:
-        mov eax, 2
-        jmp .pi_check
-.pi_yellow:
-        mov eax, 3
-
-.pi_check:
-        ; Flash the pressed color
-        push ecx
+wait_mouse_release:
         push eax
-        call flash_color
-        pop eax
-        pop ecx
-
-        ; Compare with sequence
-        movzx edx, byte [sequence + ecx]
-        cmp al, dl
-        jne .pi_fail
-
-        inc ecx
-        jmp .pi_loop
-
-.pi_fail:
-        mov byte [failed], 1
-.pi_done:
-        popad
-        ret
-
-.pi_quit:
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
-        int 0x80
-
-;---------------------------------------
-show_correct:
-        pushad
-        call draw_board
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0A
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_correct
-        int 0x80
-        mov eax, [seq_len]
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        popad
+        push ebx
+        push ecx
+.wmr:   mov  eax, SYS_MOUSE
+        int  0x80
+        test ecx, 1
+        jnz  .wmr
+        pop  ecx
+        pop  ebx
+        pop  eax
         ret
 
 ;---------------------------------------
-draw_board:
+draw_gameover:
         pushad
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
-
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_title
-        int 0x80
-
-        ; Round info
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_round
-        int 0x80
+        ; Persist high score and play loss SFX once
+        cmp byte [go_played], 0
+        jne .dgo_drawn
+        mov byte [go_played], 1
         mov eax, [seq_len]
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        ; Draw color squares (text representations)
-        ; R = Red
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x04           ; dark red
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_r
-        int 0x80
-
-        ; G = Green
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x02           ; dark green
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_g
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        ; B = Blue
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x01           ; dark blue
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_b
-        int 0x80
-
-        ; Y = Yellow
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x06           ; dark yellow
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_y
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        ; Controls
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_keys
-        int 0x80
-
+        sub eax, 1
+        mov ebx, eax
+        mov esi, hs_name_simon
+        call hs_update
+        mov [hi_score], eax
+        call audio_sfx_lose
+.dgo_drawn:
+        call draw_board_all_dark
+        ; "GAME OVER" banner
+        mov  ebx, 160
+        mov  ecx, 216
+        mov  edx, str_gameover
+        mov  esi, 0x00FF4444
+        mov  eax, 3
+        call vbe_draw_str
+        mov  ebx, 210
+        mov  ecx, 260
+        mov  edx, str_score
+        mov  esi, 0x00FFFFFF
+        mov  eax, 1
+        call vbe_draw_str
+        mov  ebx, 318
+        mov  ecx, 260
+        mov  edx, [seq_len]
+        sub  edx, 1             ; failed on this round
+        mov  esi, 0x00FFFF44
+        mov  eax, 1
+        call vbe_draw_num
+        ; HIGH score
+        mov  ebx, 210
+        mov  ecx, 275
+        mov  edx, str_hi
+        mov  esi, 0x00FFFFFF
+        mov  eax, 1
+        call vbe_draw_str
+        mov  ebx, 318
+        mov  ecx, 275
+        mov  edx, [hi_score]
+        mov  esi, 0x00FFAA44
+        mov  eax, 1
+        call vbe_draw_num
+        mov  ebx, 170
+        mov  ecx, 285
+        mov  edx, str_restart
+        mov  esi, 0x00AAAAAA
+        mov  eax, 1
+        call vbe_draw_str
         popad
         ret
 
 ;---------------------------------------
-draw_board_flash:
-        ; Like draw_board but highlights the color in flash_idx
-        pushad
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
+str_round:   db "ROUND ", 0
+str_r:       db "R", 0
+str_g:       db "G", 0
+str_b:       db "B", 0
+str_y:       db "Y", 0
+str_gameover: db "GAME OVER", 0
+str_score:   db "SCORE  ", 0
+str_hi:      db "HIGH   ", 0
+str_restart: db "PRESS ANY KEY TO RESTART  Q=QUIT", 0
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_title
-        int 0x80
+beep_freq:   dd BEEP_RED, BEEP_GRN, BEEP_BLU, BEEP_YEL
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_round
-        int 0x80
-        mov eax, [seq_len]
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        ; Red (bright if flashing)
-        mov ebx, 0x04
-        cmp dword [flash_idx], 0
-        jne .dbf_r
-        mov ebx, 0x0C           ; bright red
-.dbf_r:
-        mov eax, SYS_SETCOLOR
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_r
-        int 0x80
-
-        ; Green
-        mov ebx, 0x02
-        cmp dword [flash_idx], 1
-        jne .dbf_g
-        mov ebx, 0x0A           ; bright green
-.dbf_g:
-        mov eax, SYS_SETCOLOR
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_g
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        ; Blue
-        mov ebx, 0x01
-        cmp dword [flash_idx], 2
-        jne .dbf_b
-        mov ebx, 0x09           ; bright blue
-.dbf_b:
-        mov eax, SYS_SETCOLOR
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_b
-        int 0x80
-
-        ; Yellow
-        mov ebx, 0x06
-        cmp dword [flash_idx], 3
-        jne .dbf_y
-        mov ebx, 0x0E           ; bright yellow
-.dbf_y:
-        mov eax, SYS_SETCOLOR
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, box_y
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_keys
-        int 0x80
-
-        popad
-        ret
-
-;=======================================
-; Data
-;=======================================
-msg_title:      db "  === SIMON SAYS ===", 10, 10, 0
-msg_round:      db "  Round: ", 0
-msg_keys:       db "  Press: [R]ed [G]reen [B]lue [Y]ellow  Q=Quit", 10, 0
-msg_correct:    db "  Correct! Sequence length: ", 0
-msg_wrong:      db 10, "  WRONG! Game Over!", 10, 0
-msg_score:      db "  You reached round: ", 0
-msg_restart:    db "  R=Restart  Q=Quit", 10, 0
-
-; Color box representations
-box_r:  db "  [RRRRRR]  ", 0
-box_g:  db "  [GGGGGG]", 10, 0
-box_b:  db "  [BBBBBB]  ", 0
-box_y:  db "  [YYYYYY]", 10, 0
-
-; Beep frequencies for each color
-beep_freq:      dd 262, 330, 392, 523     ; C4, E4, G4, C5
-
-; Game state
-sequence:       times MAX_SEQ db 0
-seq_len:        dd 0
-failed:         db 0
-flash_idx:      dd 0
-rng:            dd 0
+sequence:    times MAX_SEQ db 0
+seq_len:     dd 0
+input_pos:   db 0
+gstate:      db ST_SHOW
+rng:         dd 0
+hi_score:    dd 0
+go_played:   db 0
+hs_name_simon: db "simon", 0

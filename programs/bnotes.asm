@@ -443,12 +443,11 @@ str_clear:      db "Clear", 0
 char_buf:       db 0, 0
 
 ; ═════════════════════════════════════════════════════════════
-; BSS
+; Zero-initialized storage (was `section .bss`; flat binaries don't
+; get a runtime BSS segment, so all storage must be inline.)
 ; ═════════════════════════════════════════════════════════════
 
-section .bss
-
-win_id:         resd 1
-cursor_pos:     resd 1
-draw_col:       resd 1
-note_text:      resb MAX_TEXT
+win_id:         dd 0
+cursor_pos:     dd 0
+draw_col:       dd 0
+note_text:      times MAX_TEXT db 0

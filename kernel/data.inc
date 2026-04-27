@@ -108,7 +108,7 @@ banner_str:
         db "    | |  | |  __/ | | |\ V / (_) | | | (_| || |_| |___) |                ", 0x0A
         db "    |_|  |_|\___|_|_|_| \_/ \___/|_|  \__,_| \___/|____/                 ", 0x0A
         db "                                                                          ", 0x0A
-        db "       HB Lair v3.0 - Honey Badger Lair  |  The Titan Release             ", 0x0A, 0
+        db "       HB Lair v7.0 - Honey Badger Lair  |  The Hercules Release          ", 0x0A, 0
 
 motd_str:
         db 0x0A
@@ -118,10 +118,10 @@ msg_boot_time:  db "  Boot complete in ", 0
 msg_boot_suf:   db "s", 0x0A, 0x0A, 0
 
 version_text:
-        db "Mellivora OS v4.0.0 - The Titan Release", 0x0A
+        db "Mellivora OS v7.0.0 - The Hercules Release", 0x0A
         db "  Kernel:        Mellivora (32-bit protected mode, ring 0/3)", 0x0A
         db "  Init System:   Ratel (hardware & subsystem initialization)", 0x0A
-        db "  Shell:         HB Lair v3.0 (Honey Badger Lair)", 0x0A
+        db "  Shell:         HB Lair v7.0 (Honey Badger Lair)", 0x0A
         db "  Utilities:     HBU (Honey Badger Utilities)", 0x0A
         db "  Address Space: 4 GB flat memory model", 0x0A
         db "  Disk:          ATA PIO, LBA48 (up to 128 PB)", 0x0A
@@ -348,7 +348,7 @@ help_help_gui:
         db "Enter Burrows desktop (640x480 graphical mode). Press any key to exit.", 0x0A, 0
 
 help_text:
-        db "HB Lair v3.0 Commands:", 0x0A
+        db "HB Lair v7.0 Commands:", 0x0A
         db "  help       - Show this help (help <cmd> for details)", 0x0A
         db "  ver        - System information", 0x0A
         db "  clear/cls  - Clear screen", 0x0A
@@ -487,6 +487,7 @@ msg_df_in:      db " in ", 0
 msg_df_dirs:    db " directories", 0x0A, 0
 msg_more_prompt: db "-- MORE -- (Space/Enter=next, q/ESC=quit)", 0
 msg_more_erase: db "                                          ", 0
+msg_more_usage: db "Usage: more [FILE]  (or pipe: cmd | more)", 0x0A, 0
 msg_disk_header: db "=== Disk Information ===", 0x0A, 0
 msg_disk_sectors: db "  Total sectors: ", 0
 msg_disk_size:  db "  Disk size:     ", 0

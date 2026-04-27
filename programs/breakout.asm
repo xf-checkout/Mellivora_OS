@@ -1,122 +1,96 @@
-; breakout.asm - Breakout / Arkanoid clone for Mellivora OS
-; Runs in a Burrows GUI window. Paddle+ball physics, colored bricks,
-; multiple levels, score tracking.
+; breakout.asm - Breakout / Arkanoid
+; VBE 1024x768x32bpp. Left/Right=paddle, P=pause, Space=restart, ESC=quit.
 
 %include "syscalls.inc"
-%include "lib/gui.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/highscore.inc"
+%include "lib/audio.inc"
 
-; Window
-WIN_W           equ 300
-WIN_H           equ 280
+PLAY_X          equ 50
+PLAY_Y          equ 80
+PLAY_W          equ 924
+PLAY_H          equ 640
 
-; Play area
-PLAY_X          equ 0
-PLAY_Y          equ 30
-PLAY_W          equ 300
-PLAY_H          equ 250
+PAD_W           equ 120
+PAD_H           equ 15
+PAD_Y           equ (PLAY_Y + PLAY_H - PAD_H - 10)
+PAD_SPEED       equ 12
 
-; Paddle
-PAD_W           equ 50
-PAD_H           equ 8
-PAD_Y           equ (PLAY_Y + PLAY_H - PAD_H - 4)
-PAD_SPEED       equ 6
+BALL_SIZE       equ 14
+BALL_INIT_DX    equ 3
+BALL_INIT_DY    equ -4
 
-; Ball
-BALL_SIZE       equ 6
-BALL_INIT_DX    equ 2
-BALL_INIT_DY    equ -3
-
-; Bricks
 BRICK_ROWS      equ 6
 BRICK_COLS      equ 10
-BRICK_W         equ 28
-BRICK_H         equ 10
-BRICK_GAP       equ 2
-BRICK_X_OFS     equ 3
-BRICK_Y_OFS     equ (PLAY_Y + 10)
+BRICK_W         equ 86
+BRICK_H         equ 24
+BRICK_GAP       equ 4
+BRICK_X_OFS     equ (PLAY_X + 14)
+BRICK_Y_OFS     equ (PLAY_Y + 30)
 MAX_BRICKS      equ (BRICK_ROWS * BRICK_COLS)
 
-; Game states
 STATE_MENU      equ 0
 STATE_PLAY      equ 1
 STATE_PAUSED    equ 2
 STATE_GAMEOVER  equ 3
 STATE_WIN       equ 4
 
-; Colors
-COL_BG          equ 0x00000000
+COL_BG          equ 0x00101010
 COL_PADDLE      equ 0x00CCCCCC
 COL_BALL        equ 0x00FFFFFF
-COL_HUD_BG     equ 0x00222222
-COL_HUD_TEXT    equ 0x0000FF00
+COL_HUD_BG      equ 0x00222222
+COL_HUD_TEXT    equ 0x0000CC44
 COL_GAME_OVER   equ 0x00FF4444
-COL_WIN         equ 0x0000FF00
+COL_WIN         equ 0x0044FF44
 
 start:
-        ; Create window
-        mov eax, 100
-        mov ebx, 50
-        mov ecx, WIN_W
-        mov edx, WIN_H
-        mov esi, title_str
-        call gui_create_window
-        cmp eax, -1
-        je .exit
-        mov [win_id], eax
-
+        VBE_GAME_INIT
         call game_init
 
 .main_loop:
-        call gui_compose
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .no_key
 
-        ; Handle events
-        call gui_poll_event
-        cmp eax, EVT_CLOSE
-        je .close
-        cmp eax, EVT_KEY_PRESS
-        jne .no_key
-
-        ; Key handling
         cmp dword [game_state], STATE_PLAY
         jne .menu_key
 
-        ; In-game keys
-        cmp bl, KEY_LEFT
+        cmp al, KEY_LEFT
         je .move_left
-        cmp bl, 'a'
-        je .move_left
-        cmp bl, 'A'
-        je .move_left
-        cmp bl, KEY_RIGHT
+        cmp al, KEY_RIGHT
         je .move_right
-        cmp bl, 'd'
-        je .move_right
-        cmp bl, 'D'
-        je .move_right
-        cmp bl, 'p'
+        cmp al, 'P'
         je .pause_game
-        cmp bl, 'P'
-        je .pause_game
-        cmp bl, 27             ; ESC
-        je .close
+        cmp al, KEY_ESC
+        je .exit_game
+        cmp al, 'q'
+        je .exit_game
+        cmp al, 'Q'
+        je .exit_game
         jmp .no_key
 
 .menu_key:
         cmp dword [game_state], STATE_PAUSED
         jne .check_restart
-        cmp bl, 'p'
+        cmp al, 'P'
         je .unpause
-        cmp bl, 'P'
-        je .unpause
-        cmp bl, 27
-        je .close
+        cmp al, KEY_ESC
+        je .exit_game
+        cmp al, 'q'
+        je .exit_game
+        cmp al, 'Q'
+        je .exit_game
         jmp .no_key
 .check_restart:
-        ; Game over or win — press space to restart
-        cmp bl, ' '
+        cmp al, KEY_SPACE
         je .restart
-        cmp bl, 27
-        je .close
+        cmp al, KEY_ESC
+        je .exit_game
+        cmp al, 'q'
+        je .exit_game
+        cmp al, 'Q'
+        je .exit_game
         jmp .no_key
 
 .move_left:
@@ -153,22 +127,21 @@ start:
         jmp .no_key
 
 .no_key:
-        ; Update game logic
         cmp dword [game_state], STATE_PLAY
         jne .skip_update
         call game_update
 .skip_update:
-
-        ; Render
         call game_render
-        call gui_flip
+        mov eax, SYS_SLEEP
+        mov ebx, 1
+        int 0x80
         jmp .main_loop
 
-.close:
-        mov eax, [win_id]
-        call gui_destroy_window
-.exit:
-        mov eax, SYS_EXIT
+.exit_game:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
         int 0x80
 
 ;=======================================================================
@@ -183,6 +156,11 @@ game_init:
         mov dword [lives], 3
         mov dword [level], 1
         mov dword [bricks_left], MAX_BRICKS
+        mov byte  [go_played], 0
+        ; Load persistent high score
+        mov esi, hs_name_breakout
+        call hs_load
+        mov [hi_score], eax
 
         ; Paddle center
         mov dword [pad_x], (PLAY_X + PLAY_W/2 - PAD_W/2)
@@ -277,6 +255,15 @@ game_update:
         jmp .gu_done
 .game_over:
         mov dword [game_state], STATE_GAMEOVER
+        ; Persist high score and play SFX once
+        cmp byte [go_played], 0
+        jne .gu_done
+        mov byte [go_played], 1
+        mov esi, hs_name_breakout
+        mov ebx, [score]
+        call hs_update
+        mov [hi_score], eax
+        call audio_sfx_lose
         jmp .gu_done
 .no_bottom:
 
@@ -429,145 +416,142 @@ check_brick_collision:
 game_render:
         pushad
 
-        ; Clear play area
-        mov eax, [win_id]
-        mov ebx, PLAY_X
-        mov ecx, PLAY_Y
-        mov edx, PLAY_W
-        mov esi, PLAY_H
-        mov edi, COL_BG
-        call gui_fill_rect
+        ; Clear screen
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; Draw HUD background
-        mov eax, [win_id]
-        xor ebx, ebx
-        xor ecx, ecx
-        mov edx, WIN_W
-        mov esi, 28
+        ; HUD background
+        mov ebx, 0
+        mov ecx, 0
+        mov edx, 1024
+        mov esi, PLAY_Y - 4
         mov edi, COL_HUD_BG
-        call gui_fill_rect
+        call vbe_fill_rect
 
-        ; Draw score text
-        mov eax, [win_id]
-        mov ebx, 8
-        mov ecx, 4
-        mov esi, str_score
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+        ; SCORE:
+        mov ebx, 40
+        mov ecx, 28
+        mov edx, str_score
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 170
+        mov ecx, 28
+        mov edx, [score]
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_num
 
-        ; Draw score number
-        mov eax, [score]
-        call itoa
-        mov eax, [win_id]
-        mov ebx, 56
-        mov ecx, 4
-        mov esi, num_buf
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+        ; HIGH:
+        mov ebx, 700
+        mov ecx, 28
+        mov edx, str_hi
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 800
+        mov ecx, 28
+        mov edx, [hi_score]
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_num
 
-        ; Draw lives
-        mov eax, [win_id]
-        mov ebx, 120
-        mov ecx, 4
-        mov esi, str_lives
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+        ; LIVES:
+        mov ebx, 390
+        mov ecx, 28
+        mov edx, str_lives
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 510
+        mov ecx, 28
+        mov edx, [lives]
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_num
 
-        mov eax, [lives]
-        call itoa
-        mov eax, [win_id]
-        mov ebx, 168
-        mov ecx, 4
-        mov esi, num_buf
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
-
-        ; Draw level
-        mov eax, [win_id]
-        mov ebx, 210
-        mov ecx, 4
-        mov esi, str_level
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
-
-        mov eax, [level]
-        call itoa
-        mov eax, [win_id]
-        mov ebx, 260
-        mov ecx, 4
-        mov esi, num_buf
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+        ; LEVEL:
+        mov ebx, 730
+        mov ecx, 28
+        mov edx, str_level
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 850
+        mov ecx, 28
+        mov edx, [level]
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_num
 
         ; Draw bricks
         call draw_bricks
 
-        ; Draw paddle
-        mov eax, [win_id]
+        ; Paddle
         mov ebx, [pad_x]
         mov ecx, PAD_Y
         mov edx, PAD_W
         mov esi, PAD_H
         mov edi, COL_PADDLE
-        call gui_fill_rect
+        call vbe_fill_rect
 
-        ; Draw ball
-        mov eax, [win_id]
+        ; Ball
         mov ebx, [ball_x]
         mov ecx, [ball_y]
         mov edx, BALL_SIZE
         mov esi, BALL_SIZE
         mov edi, COL_BALL
-        call gui_fill_rect
+        call vbe_fill_rect
 
-        ; Draw state overlays
+        ; State overlays
         cmp dword [game_state], STATE_PAUSED
-        je .draw_paused
+        je .rend_paused
         cmp dword [game_state], STATE_GAMEOVER
-        je .draw_gameover
+        je .rend_gameover
         cmp dword [game_state], STATE_WIN
-        je .draw_win
+        je .rend_win
         jmp .render_done
 
-.draw_paused:
-        mov eax, [win_id]
-        mov ebx, 100
-        mov ecx, 140
-        mov esi, str_paused
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+.rend_paused:
+        mov ebx, 352
+        mov ecx, 350
+        mov edx, str_paused
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
         jmp .render_done
 
-.draw_gameover:
-        mov eax, [win_id]
-        mov ebx, 90
-        mov ecx, 130
-        mov esi, str_gameover
-        mov edi, COL_GAME_OVER
-        call gui_draw_text
-        mov eax, [win_id]
-        mov ebx, 60
-        mov ecx, 150
-        mov esi, str_restart
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+.rend_gameover:
+        mov ebx, 392
+        mov ecx, 340
+        mov edx, str_gameover
+        mov esi, COL_GAME_OVER
+        mov eax, 3
+        call vbe_draw_str
+        mov ebx, 377
+        mov ecx, 390
+        mov edx, str_restart
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
         jmp .render_done
 
-.draw_win:
-        mov eax, [win_id]
-        mov ebx, 80
-        mov ecx, 130
-        mov esi, str_you_win
-        mov edi, COL_WIN
-        call gui_draw_text
-        mov eax, [win_id]
-        mov ebx, 60
-        mov ecx, 150
-        mov esi, str_restart
-        mov edi, COL_HUD_TEXT
-        call gui_draw_text
+.rend_win:
+        mov ebx, 422
+        mov ecx, 340
+        mov edx, str_you_win
+        mov esi, COL_WIN
+        mov eax, 3
+        call vbe_draw_str
+        mov ebx, 377
+        mov ecx, 390
+        mov edx, str_restart
+        mov esi, COL_HUD_TEXT
+        mov eax, 2
+        call vbe_draw_str
 
 .render_done:
+        VBE_GAME_PRESENT
         popad
         ret
 
@@ -577,7 +561,6 @@ game_render:
 draw_bricks:
         pushad
         xor ecx, ecx           ; Row
-        mov esi, bricks
 .db_row:
         cmp ecx, BRICK_ROWS
         jge .db_done
@@ -585,10 +568,18 @@ draw_bricks:
 .db_col:
         cmp edx, BRICK_COLS
         jge .db_next_row
-        cmp byte [esi], 0
-        je .db_next             ; Dead brick
 
-        ; Calculate position
+        ; Is brick alive? index = row*BRICK_COLS + col
+        push ecx
+        push edx
+        mov eax, ecx
+        imul eax, BRICK_COLS
+        add eax, edx
+        cmp byte [bricks + eax], 0
+        pop edx
+        pop ecx
+        je .db_next
+
         push ecx
         push edx
 
@@ -610,23 +601,17 @@ draw_bricks:
         jl .db_color_ok
         mov eax, 5
 .db_color_ok:
-        mov eax, [brick_colors + eax*4]
-
-        ; Draw it
-        push eax               ; Color
-        mov eax, [win_id]
+        mov edi, [brick_colors + eax*4]
         mov ebx, [.db_bx]
         mov ecx, [.db_by]
         mov edx, BRICK_W
         mov esi, BRICK_H
-        pop edi                 ; Color
-        call gui_fill_rect
+        call vbe_fill_rect
 
         pop edx
         pop ecx
 
 .db_next:
-        inc esi
         inc edx
         jmp .db_col
 .db_next_row:
@@ -640,53 +625,24 @@ draw_bricks:
 .db_by: dd 0
 
 ;=======================================================================
-; UTILITY
-;=======================================================================
-
-; itoa - Convert unsigned integer to decimal string
-; EAX = number → num_buf filled
-itoa:
-        pushad
-        mov edi, num_buf
-        mov ecx, 0              ; Digit count
-        mov ebx, 10
-.itoa_div:
-        xor edx, edx
-        div ebx
-        push edx
-        inc ecx
-        cmp eax, 0
-        jne .itoa_div
-.itoa_write:
-        pop edx
-        add dl, '0'
-        mov [edi], dl
-        inc edi
-        dec ecx
-        jnz .itoa_write
-        mov byte [edi], 0       ; Null terminate
-        popad
-        ret
-
-;=======================================================================
 ; DATA
 ;=======================================================================
 
-title_str:   db "Breakout", 0
-str_score:   db "Score:", 0
-str_lives:   db "Lives:", 0
-str_level:   db "Level:", 0
-str_paused:  db "PAUSED (P)", 0
+str_score:    db "SCORE:", 0
+str_hi:       db "HIGH:", 0
+str_lives:    db "LIVES:", 0
+str_level:    db "LEVEL:", 0
+str_paused:   db "PAUSED  P=RESUME", 0
 str_gameover: db "GAME OVER", 0
-str_you_win: db "YOU WIN!", 0
-str_restart: db "Press SPACE to restart", 0
+str_you_win:  db "YOU WIN", 0
+str_restart:  db "SPACE=RESTART", 0
 
 ; Brick colors per row (6 rows)
 brick_colors:
         dd 0x00FF2222          ; Red
         dd 0x00FF8822          ; Orange
-        dd 0x00FFFF22          ; Yellow
-        dd 0x0022FF22          ; Green
+        dd 0x00DDDD22          ; Yellow
+        dd 0x0022CC22          ; Green
         dd 0x002288FF          ; Blue
         dd 0x00AA22FF          ; Purple
 
@@ -694,9 +650,11 @@ brick_colors:
 ; BSS
 ;=======================================================================
 align 4
-win_id:         dd 0
 game_state:     dd 0
 score:          dd 0
+hi_score:       dd 0
+go_played:      db 0
+hs_name_breakout: db "breakout", 0
 lives:          dd 0
 level:          dd 0
 pad_x:          dd 0
@@ -705,5 +663,4 @@ ball_y:         dd 0
 ball_dx:        dd 0
 ball_dy:        dd 0
 bricks_left:    dd 0
-num_buf:        times 12 db 0
 bricks:         times MAX_BRICKS db 0

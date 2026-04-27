@@ -1,494 +1,580 @@
-; hangman.asm - Classic Hangman word guessing game for Mellivora OS
-; Guess the word one letter at a time. 6 wrong guesses = game over.
+; hangman.asm - Hangman VBE graphics game for Mellivora OS
+; Guess the hidden word one letter at a time.  6 wrong guesses = game over.
 
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/highscore.inc"
+%include "lib/audio.inc"
 
-MAX_WRONG       equ 6
-MAX_WORD        equ 20
+WORD_COUNT  equ 40
+MAX_WORD    equ 20
+MAX_WRONG   equ 6
+
+COL_BG      equ 0x00101820
+COL_GALLOWS equ 0x00CCAA66
+COL_HEAD    equ 0x00FFCC88
+COL_BODY    equ 0x00FFCC88
+COL_TEXT    equ 0x00DDDDFF
+COL_BLANK   equ 0x00AAAACC
+COL_FOUND   equ 0x0088FFAA
+COL_WRONG   equ 0x00FF6655
+COL_WIN     equ 0x0044FF88
+COL_LOSE    equ 0x00FF4444
+
+; Gallows pixel anchors
+GALL_BASE_X1 equ 60
+GALL_BASE_X2 equ 260
+GALL_BASE_Y  equ 420
+GALL_POST_X  equ 120
+GALL_ARM_Y   equ 80
+GALL_ARM_X2  equ 220
+GALL_HEAD_X  equ 220
+GALL_HEAD_Y  equ 120
+GALL_HEAD_R  equ 22
+GALL_BODY_Y1 equ 142
+GALL_BODY_Y2 equ 240
+GALL_LARL_X  equ 220
+GALL_LARM_X  equ 185
+GALL_RARM_X  equ 255
+GALL_ARM_Y2  equ 200
+GALL_LLEGL_X equ 220
+GALL_LLEG_X  equ 190
+GALL_RLEG_X  equ 250
+GALL_LEG_Y   equ 310
+
+; Word area
+WORD_X      equ 305
+WORD_Y      equ 180
+WORD_STEP   equ 28
+ALPHA_X     equ 305
+ALPHA_Y     equ 300
 
 start:
-.main_loop:
-        mov eax, SYS_CLEAR
-        int 0x80
+        VBE_GAME_INIT
+        ; Load total wins from disk
+        push esi
+        mov esi, hs_name_hm
+        call hs_load
+        mov [total_wins], eax
+        pop esi
         call pick_word
-        call init_round
-.round_loop:
-        call draw_screen
+
+.main_loop:
+        call draw_scene
+        VBE_GAME_PRESENT
+
         cmp byte [won], 1
-        je .win
-        cmp dword [wrong], MAX_WRONG
-        jge .lose
+        je  .end_check
+        cmp byte [lost], 1
+        je  .end_check
+        jmp .poll_key
+.end_check:
+        ; Persist + SFX once per game-over transition
+        cmp byte [result_played], 0
+        jne .poll_end
+        mov byte [result_played], 1
+        cmp byte [won], 1
+        jne .ec_lose
+        inc dword [total_wins]
+        push esi
+        mov esi, hs_name_hm
+        mov ebx, [total_wins]
+        call hs_save
+        pop esi
+        call audio_sfx_win
+        jmp .poll_end
+.ec_lose:
+        call audio_sfx_lose
+        jmp .poll_end
+.poll_key:
+        VBE_GAME_POLL_KEY
+        cmp  eax, -1
+        je   .main_loop
+        cmp  eax, KEY_ESC
+        je   .quit
+        cmp  eax, KEY_Q
+        je   .quit
+        cmp  eax, 'Q'
+        je   .quit
+        ; map scancode → A-Z index (0-25)
+        call scancode_to_letter     ; EAX=scancode → EAX=0-25 or -1
+        cmp  eax, -1
+        je   .main_loop
+        ; check not already guessed
+        cmp  byte [guessed + eax], 1
+        je   .main_loop
+        mov  byte [guessed + eax], 1
+        call check_guess            ; EAX=letter index
+        call check_win
+        call check_lose
+        jmp  .main_loop
 
-        call get_guess
-        cmp al, 0
-        je .quit_game
-        call check_guess
-        jmp .round_loop
+.poll_end:
+        VBE_GAME_POLL_KEY
+        cmp  eax, -1
+        je   .main_loop
+        cmp  eax, KEY_ESC
+        je   .quit
+        cmp  eax, KEY_Q
+        je   .quit
+        cmp  eax, 'Q'
+        je   .quit
+        call pick_word
+        jmp  .main_loop
 
-.win:
-        call draw_screen
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0A
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_win
-        int 0x80
-        jmp .again
-
-.lose:
-        call draw_screen
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0C
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_lose
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_answer
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, cur_word
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-
-.again:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_again
-        int 0x80
-.again_key:
-        mov eax, SYS_GETCHAR
-        int 0x80
-        cmp al, 'y'
-        je .main_loop
-        cmp al, 'Y'
-        je .main_loop
-        cmp al, 'n'
-        je .quit_game
-        cmp al, 'N'
-        je .quit_game
-        jmp .again_key
-
-.quit_game:
-        mov eax, SYS_CLEAR
+.quit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
         mov eax, SYS_EXIT
         xor ebx, ebx
         int 0x80
 
-;---------------------------------------
+;-----------------------------------------------------------
 pick_word:
         pushad
-        ; Use gettime as index into word list
-        mov eax, SYS_GETTIME
-        int 0x80
-        xor edx, edx
-        mov ecx, WORD_COUNT
-        div ecx                 ; EDX = index
-        ; Calculate pointer: word_list + EDX * MAX_WORD
+        ; clear state
+        mov  edi, guessed
+        mov  ecx, 26
+        xor  al,  al
+        rep  stosb
+        mov  edi, reveal
+        mov  ecx, MAX_WORD
+        xor  al,  al
+        rep  stosb
+        mov  byte [won],  0
+        mov  byte [lost], 0
+        mov  byte [wrong_count], 0
+        mov  byte [result_played], 0
+        ; pick word
+        mov  eax, SYS_GETTIME
+        int  0x80
+        xor  edx, edx
+        mov  ecx, WORD_COUNT
+        div  ecx            ; edx = index
         imul edx, MAX_WORD
-        lea esi, [word_list + edx]
-        mov edi, cur_word
-        ; Copy word
-        xor ecx, ecx
-.pw_copy:
-        mov al, [esi + ecx]
-        mov [edi + ecx], al
-        cmp al, 0
-        je .pw_done
-        inc ecx
-        cmp ecx, MAX_WORD - 1
-        jl .pw_copy
-        mov byte [edi + ecx], 0
-.pw_done:
-        mov [word_len], ecx
+        add  edx, word_list
+        mov  esi, edx
+        mov  edi, cur_word
+        mov  ecx, MAX_WORD
+        rep  movsb
+        ; compute word length (find first space or NUL)
+        xor  ecx, ecx
+.pw_len:
+        cmp  ecx, MAX_WORD
+        jge  .pw_ldone
+        movzx eax, byte [cur_word + ecx]
+        cmp  al, 0
+        je   .pw_ldone
+        cmp  al, ' '
+        je   .pw_ldone
+        inc  ecx
+        jmp  .pw_len
+.pw_ldone:
+        mov  byte [word_len], cl
         popad
         ret
 
-;---------------------------------------
-init_round:
-        pushad
-        mov dword [wrong], 0
-        mov byte [won], 0
-        ; Clear guessed letters
-        mov edi, guessed
-        mov ecx, 26
-        xor eax, eax
-        rep stosb
-        ; Clear reveal buffer
-        mov edi, reveal
-        mov ecx, MAX_WORD
-        rep stosb
-        popad
-        ret
-
-;---------------------------------------
-get_guess:
-        ; Returns letter in AL (lowercase), 0 = quit
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_guess
-        int 0x80
-.gg_key:
-        mov eax, SYS_GETCHAR
-        int 0x80
-        cmp al, 27             ; ESC
-        je .gg_quit
-        ; Convert to lowercase
-        cmp al, 'A'
-        jl .gg_key
-        cmp al, 'z'
-        jg .gg_key
-        cmp al, 'Z'
-        jg .gg_check_lower
-        add al, 32             ; uppercase to lowercase
-.gg_check_lower:
-        cmp al, 'a'
-        jl .gg_key
-        cmp al, 'z'
-        jg .gg_key
-        ; Check if already guessed
-        movzx ecx, al
-        sub ecx, 'a'
-        cmp byte [guessed + ecx], 1
-        je .gg_key             ; already guessed, ignore
-        ; Mark as guessed
-        mov byte [guessed + ecx], 1
-        ; Echo letter
-        push eax
-        movzx ebx, al
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        pop eax
-        ret
-.gg_quit:
-        xor eax, eax
-        ret
-
-;---------------------------------------
+;-----------------------------------------------------------
+; check_guess: EAX = letter index (0-25)
 check_guess:
-        ; AL = guessed letter (lowercase)
         pushad
-        mov dl, al              ; save letter
-        xor ecx, ecx
-        xor ebx, ebx           ; hit flag
-.cg_loop:
-        cmp ecx, [word_len]
-        jge .cg_done
-        mov al, [cur_word + ecx]
-        ; Compare lowercase
-        cmp al, 'A'
-        jl .cg_cmp
-        cmp al, 'Z'
-        jg .cg_cmp
-        add al, 32
-.cg_cmp:
-        cmp al, dl
-        jne .cg_next
-        mov byte [reveal + ecx], 1
-        mov ebx, 1
+        mov  [.cg_idx], eax
+        add  eax, 'A'
+        mov  [.cg_char], al
+        ; scan word
+        xor  ecx, ecx
+        mov  bl, 0          ; found flag
+.cg_scan:
+        cmp  cl, [word_len]
+        jge  .cg_done
+        mov  al, [cur_word + ecx]
+        cmp  al, [.cg_char]
+        jne  .cg_next
+        mov  byte [reveal + ecx], 1
+        mov  bl, 1
 .cg_next:
-        inc ecx
-        jmp .cg_loop
-
+        inc  ecx
+        jmp  .cg_scan
 .cg_done:
-        cmp ebx, 0
-        jne .cg_check_win
-        inc dword [wrong]
-        jmp .cg_end
+        test bl, bl
+        jnz  .cg_exit
+        inc  byte [wrong_count]
+.cg_exit:
+        popad
+        ret
+.cg_idx:  db 0
+.cg_char: db 0
 
-.cg_check_win:
-        ; Check if all letters revealed
-        xor ecx, ecx
-        mov byte [won], 1
-.cg_wloop:
-        cmp ecx, [word_len]
-        jge .cg_end
-        cmp byte [reveal + ecx], 0
-        jne .cg_wnext
-        mov byte [won], 0
-        jmp .cg_end
-.cg_wnext:
-        inc ecx
-        jmp .cg_wloop
-
-.cg_end:
+;-----------------------------------------------------------
+check_win:
+        pushad
+        xor  ecx, ecx
+.cw_loop:
+        cmp  cl, [word_len]
+        jge  .cw_all
+        cmp  byte [reveal + ecx], 0
+        je   .cw_no
+        inc  ecx
+        jmp  .cw_loop
+.cw_all:
+        mov  byte [won], 1
+        popad
+        ret
+.cw_no:
         popad
         ret
 
-;---------------------------------------
-draw_screen:
+;-----------------------------------------------------------
+check_lose:
+        cmp  byte [wrong_count], MAX_WRONG
+        jl   .cl_no
+        mov  byte [lost], 1
+.cl_no: ret
+
+;-----------------------------------------------------------
+; ascii_to_letter: EAX=ASCII key → EAX=0-25 (A-Z index) or -1
+; SYS_READ_KEY returns lowercase ASCII for letter keys.
+scancode_to_letter:
+        cmp  eax, 'a'
+        jl   .stl_none
+        cmp  eax, 'z'
+        jg   .stl_none
+        sub  eax, 'a'           ; 0=A, 1=B, ..., 25=Z
+        ret
+.stl_none:
+        mov  eax, -1
+        ret
+
+;-----------------------------------------------------------
+draw_scene:
         pushad
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
+        mov  edx, COL_BG
+        call vbe_clear_screen
 
         ; Title
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_title
-        int 0x80
+        mov  ebx, 220
+        mov  ecx, 16
+        mov  edx, str_title
+        mov  esi, 0x00EEEEFF
+        mov  eax, 2
+        call vbe_draw_str
 
-        ; Draw hangman figure
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, [wrong]
-        ; Line 1: top bar
-        mov eax, SYS_PRINT
-        mov ebx, hang_top
-        int 0x80
+        ; Gallows frame (static)
+        ; Base
+        mov  ebx, GALL_BASE_X1
+        mov  ecx, GALL_BASE_Y
+        mov  edx, GALL_BASE_X2
+        mov  esi, GALL_BASE_Y
+        mov  edi, COL_GALLOWS
+        call vbe_draw_line
+        ; Post
+        mov  ebx, GALL_POST_X
+        mov  ecx, GALL_BASE_Y
+        mov  edx, GALL_POST_X
+        mov  esi, GALL_ARM_Y
+        mov  edi, COL_GALLOWS
+        call vbe_draw_line
+        ; Arm
+        mov  ebx, GALL_POST_X
+        mov  ecx, GALL_ARM_Y
+        mov  edx, GALL_ARM_X2
+        mov  esi, GALL_ARM_Y
+        mov  edi, COL_GALLOWS
+        call vbe_draw_line
+        ; Rope
+        mov  ebx, GALL_ARM_X2
+        mov  ecx, GALL_ARM_Y
+        mov  edx, GALL_ARM_X2
+        mov  esi, GALL_HEAD_Y - GALL_HEAD_R
+        mov  edi, COL_GALLOWS
+        call vbe_draw_line
 
-        ; Line 2: head
-        cmp dword [wrong], 1
-        jl .ds_no_head
-        mov eax, SYS_PRINT
-        mov ebx, hang_head
-        int 0x80
-        jmp .ds_body
-.ds_no_head:
-        mov eax, SYS_PRINT
-        mov ebx, hang_empty
-        int 0x80
+        ; Body parts by wrong_count
+        movzx eax, byte [wrong_count]
+        cmp  eax, 0
+        je   .ds_no_body
 
-.ds_body:
-        ; Line 3: body + arms
-        cmp dword [wrong], 4
-        jge .ds_both_arms
-        cmp dword [wrong], 3
-        jge .ds_left_arm
-        cmp dword [wrong], 2
-        jge .ds_body_only
-        mov eax, SYS_PRINT
-        mov ebx, hang_empty
-        int 0x80
-        jmp .ds_legs
-.ds_body_only:
-        mov eax, SYS_PRINT
-        mov ebx, hang_body
-        int 0x80
-        jmp .ds_legs
-.ds_left_arm:
-        mov eax, SYS_PRINT
-        mov ebx, hang_larm
-        int 0x80
-        jmp .ds_legs
-.ds_both_arms:
-        mov eax, SYS_PRINT
-        mov ebx, hang_arms
-        int 0x80
+        ; 1 = head
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_HEAD_Y
+        mov  edx, GALL_HEAD_R
+        mov  esi, COL_HEAD
+        call vbe_draw_circle
+        cmp  eax, 1
+        je   .ds_no_body
 
-.ds_legs:
-        ; Line 4: legs
-        cmp dword [wrong], 6
-        jge .ds_both_legs
-        cmp dword [wrong], 5
-        jge .ds_left_leg
-        mov eax, SYS_PRINT
-        mov ebx, hang_empty
-        int 0x80
-        jmp .ds_base
-.ds_left_leg:
-        mov eax, SYS_PRINT
-        mov ebx, hang_lleg
-        int 0x80
-        jmp .ds_base
-.ds_both_legs:
-        mov eax, SYS_PRINT
-        mov ebx, hang_legs
-        int 0x80
+        ; 2 = body
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_BODY_Y1
+        mov  edx, GALL_HEAD_X
+        mov  esi, GALL_BODY_Y2
+        mov  edi, COL_BODY
+        call vbe_draw_line
+        cmp  eax, 2
+        je   .ds_no_body
 
-.ds_base:
-        mov eax, SYS_PRINT
-        mov ebx, hang_base
-        int 0x80
+        ; 3 = left arm
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_BODY_Y1 + 20
+        mov  edx, GALL_LARM_X
+        mov  esi, GALL_ARM_Y2
+        mov  edi, COL_BODY
+        call vbe_draw_line
+        cmp  eax, 3
+        je   .ds_no_body
 
-        ; Show word with blanks
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_word
-        int 0x80
+        ; 4 = right arm
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_BODY_Y1 + 20
+        mov  edx, GALL_RARM_X
+        mov  esi, GALL_ARM_Y2
+        mov  edi, COL_BODY
+        call vbe_draw_line
+        cmp  eax, 4
+        je   .ds_no_body
 
-        xor ecx, ecx
+        ; 5 = left leg
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_BODY_Y2
+        mov  edx, GALL_LLEG_X
+        mov  esi, GALL_LEG_Y
+        mov  edi, COL_BODY
+        call vbe_draw_line
+        cmp  eax, 5
+        je   .ds_no_body
+
+        ; 6 = right leg
+        mov  ebx, GALL_HEAD_X
+        mov  ecx, GALL_BODY_Y2
+        mov  edx, GALL_RLEG_X
+        mov  esi, GALL_LEG_Y
+        mov  edi, COL_BODY
+        call vbe_draw_line
+
+.ds_no_body:
+
+        ; Word blanks / letters
+        movzx ecx, byte [word_len]
+        xor   ebx, ebx
 .ds_word:
-        cmp ecx, [word_len]
-        jge .ds_wdone
-        cmp byte [reveal + ecx], 1
-        jne .ds_blank
-        ; Show letter
-        push ecx
-        movzx ebx, byte [cur_word + ecx]
-        ; Uppercase for display
-        cmp bl, 'a'
-        jl .ds_wprint
-        cmp bl, 'z'
-        jg .ds_wprint
-        sub bl, 32
-.ds_wprint:
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        pop ecx
-        jmp .ds_wnext
+        cmp   ebx, ecx
+        jge   .ds_word_done
+        ; x = WORD_X + ebx * WORD_STEP
+        push  ebx
+        push  ecx
+        imul  eax, ebx, WORD_STEP
+        add   eax, WORD_X
+        ; Draw underscore at bottom of each slot
+        push  eax
+        add   eax, 2
+        mov   [.ds_wx], eax
+        mov   [.ds_wy], dword WORD_Y + 16
+        mov   ebx, [.ds_wx]
+        sub   ebx, 2
+        mov   ecx, [.ds_wy]
+        mov   edx, WORD_STEP - 6
+        mov   esi, COL_BLANK
+        call  vbe_draw_hline
+        pop   eax
+        mov   [.ds_wx], eax
+        ; Check revealed
+        pop   ecx
+        pop   ebx
+        push  ebx
+        push  ecx
+        cmp   byte [reveal + ebx], 0
+        je    .ds_blank
+        ; draw letter
+        movzx edx, byte [cur_word + ebx]
+        mov   ebx, [.ds_wx]
+        mov   ecx, WORD_Y
+        mov   esi, COL_FOUND
+        mov   eax, 2
+        call  vbe_draw_char
+        jmp   .ds_wnext
 .ds_blank:
-        push ecx
-        mov eax, SYS_PUTCHAR
-        mov ebx, '_'
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        pop ecx
+        ; if lost, reveal
+        cmp   byte [lost], 1
+        jne   .ds_wnext
+        movzx edx, byte [cur_word + ebx]
+        mov   ebx, [.ds_wx]
+        mov   ecx, WORD_Y
+        mov   esi, COL_WRONG
+        mov   eax, 2
+        call  vbe_draw_char
 .ds_wnext:
-        inc ecx
-        jmp .ds_word
-.ds_wdone:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
+        pop   ecx
+        pop   ebx
+        inc   ebx
+        jmp   .ds_word
+.ds_word_done:
 
-        ; Show guessed letters
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x08
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_guessed
-        int 0x80
+        ; Alphabet grid (2 rows: A-M, N-Z)
+        xor   ecx, ecx          ; letter 0-25
+.ds_alpha:
+        cmp   ecx, 26
+        jge   .ds_alpha_done
+        push  ecx
+        ; row 0 = letters 0-12, row 1 = 13-25
+        mov   eax, ecx
+        mov   edx, 0
+        cmp   eax, 13
+        jl    .ds_al_r0
+        sub   eax, 13
+        mov   edx, 1
+.ds_al_r0:
+        ; x = ALPHA_X + col * 22, y = ALPHA_Y + row * 26
+        imul  eax, 22
+        add   eax, ALPHA_X
+        imul  edx, 26
+        add   edx, ALPHA_Y
+        mov   [.ds_ax], eax
+        mov   [.ds_ay], edx
+        pop   ecx
+        push  ecx
+        ; colour: guessed = dim, not guessed = bright
+        cmp   byte [guessed + ecx], 1
+        jne   .ds_al_bright
+        mov   esi, 0x00444466
+        jmp   .ds_al_draw
+.ds_al_bright:
+        mov   esi, COL_TEXT
+.ds_al_draw:
+        mov   edx, ecx
+        add   edx, 'A'
+        mov   ebx, [.ds_ax]
+        mov   ecx, [.ds_ay]
+        mov   eax, 1
+        call  vbe_draw_char
+        pop   ecx
+        inc   ecx
+        jmp   .ds_alpha
+.ds_alpha_done:
 
-        xor ecx, ecx
-.ds_gloop:
-        cmp ecx, 26
-        jge .ds_gdone
-        cmp byte [guessed + ecx], 0
-        je .ds_gnext
-        push ecx
-        lea ebx, [ecx + 'A']
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        pop ecx
-.ds_gnext:
-        inc ecx
-        jmp .ds_gloop
-.ds_gdone:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
+        ; Wrong count — scale 2
+        ; "WRONG  " (7 chars × 12px = 84px) then digit then " OF 6"
+        mov   ebx, 305
+        mov   ecx, 373
+        mov   edx, str_wrong
+        mov   esi, COL_TEXT
+        mov   eax, 2
+        call  vbe_draw_str
+        movzx edx, byte [wrong_count]
+        mov   ebx, 389
+        mov   ecx, 373
+        mov   esi, COL_WRONG
+        mov   eax, 2
+        call  vbe_draw_num
+        mov   ebx, 401
+        mov   ecx, 373
+        mov   edx, str_of6
+        mov   esi, COL_TEXT
+        mov   eax, 2
+        call  vbe_draw_str
 
-        ; Wrong count
-        mov eax, SYS_PRINT
-        mov ebx, msg_wrong
-        int 0x80
-        mov eax, [wrong]
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, '/'
-        int 0x80
-        mov eax, MAX_WRONG
-        call print_dec
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
+        ; Total wins counter
+        mov   ebx, 580
+        mov   ecx, 60
+        mov   edx, str_wins
+        mov   esi, 0x00FFAA44
+        mov   eax, 2
+        call  vbe_draw_str
+        mov   ebx, 660
+        mov   ecx, 60
+        mov   edx, [total_wins]
+        mov   esi, 0x00FFAA44
+        mov   eax, 2
+        call  vbe_draw_num
 
+        ; Win/Lose overlay
+        cmp   byte [won], 1
+        jne   .ds_check_lose
+        mov   ebx, 225
+        mov   ecx, 440
+        mov   edx, str_you_win
+        mov   esi, COL_WIN
+        mov   eax, 2
+        call  vbe_draw_str
+        jmp   .ds_end
+.ds_check_lose:
+        cmp   byte [lost], 1
+        jne   .ds_end
+        mov   ebx, 200
+        mov   ecx, 440
+        mov   edx, str_you_lose
+        mov   esi, COL_LOSE
+        mov   eax, 2
+        call  vbe_draw_str
+.ds_end:
         popad
         ret
 
-;=======================================
-; Data
-;=======================================
-msg_title:      db "  === HANGMAN ===", 10, 10, 0
-msg_word:       db "  Word: ", 0
-msg_guessed:    db "  Used: ", 0
-msg_wrong:      db "  Wrong: ", 0
-msg_guess:      db 10, "  Guess a letter: ", 0
-msg_win:        db 10, "  Congratulations! You guessed the word!", 10, 0
-msg_lose:       db 10, "  Game Over! You were hanged!", 10, 0
-msg_answer:     db "  The word was: ", 0
-msg_again:      db 10, "  Play again? (Y/N) ", 0
+.ds_wx: dd 0
+.ds_wy: dd 0
+.ds_ax: dd 0
+.ds_ay: dd 0
 
-; Hangman ASCII art pieces
-hang_top:       db "    +---+", 10, "    |   |", 10, 0
-hang_head:      db "    |   O", 10, 0
-hang_body:      db "    |   |", 10, 0
-hang_larm:      db "    |  /|", 10, 0
-hang_arms:      db "    |  /|\", 10, 0
-hang_lleg:      db "    |  / ", 10, 0
-hang_legs:      db "    |  / \", 10, 0
-hang_empty:     db "    |", 10, 0
-hang_base:      db "    +====", 10, 0
+;-----------------------------------------------------------
+; (sc_table removed — keys are now matched as ASCII lowercase letters)
 
-; Word list (lowercase, null-terminated, padded to MAX_WORD each)
-WORD_COUNT      equ 40
+str_title:    db "HANGMAN", 0
+str_wrong:    db "WRONG  ", 0
+str_of6:      db " OF 6", 0
+str_wins:     db "WINS:", 0
+str_you_win:  db "YOU WIN!", 0
+str_you_lose: db "GAME OVER!", 0
+hs_name_hm:   db "hangman", 0
+
+cur_word:    times MAX_WORD db 0
+word_len:    db 0
+guessed:     times 26 db 0
+reveal:      times MAX_WORD db 0
+wrong_count: db 0
+won:         db 0
+lost:        db 0
+result_played: db 0
+total_wins:  dd 0
+
 word_list:
-        db "computer",0,0,0,0,0,0,0,0,0,0,0,0
-        db "keyboard",0,0,0,0,0,0,0,0,0,0,0,0
-        db "assembly",0,0,0,0,0,0,0,0,0,0,0,0
-        db "mellivora",0,0,0,0,0,0,0,0,0,0,0
-        db "processor",0,0,0,0,0,0,0,0,0,0,0
-        db "memory",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "network",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "desktop",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "program",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "terminal",0,0,0,0,0,0,0,0,0,0,0,0
-        db "function",0,0,0,0,0,0,0,0,0,0,0,0
-        db "variable",0,0,0,0,0,0,0,0,0,0,0,0
-        db "register",0,0,0,0,0,0,0,0,0,0,0,0
-        db "hardware",0,0,0,0,0,0,0,0,0,0,0,0
-        db "software",0,0,0,0,0,0,0,0,0,0,0,0
-        db "monitor",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "printer",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "graphics",0,0,0,0,0,0,0,0,0,0,0,0
-        db "internet",0,0,0,0,0,0,0,0,0,0,0,0
-        db "protocol",0,0,0,0,0,0,0,0,0,0,0,0
-        db "database",0,0,0,0,0,0,0,0,0,0,0,0
-        db "compiler",0,0,0,0,0,0,0,0,0,0,0,0
-        db "window",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "button",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "mouse",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "driver",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "kernel",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "socket",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "buffer",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "system",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "binary",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "server",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "cipher",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "syntax",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "virtual",0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "pixel",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "queue",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "cache",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "sector",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        db "thread",0,0,0,0,0,0,0,0,0,0,0,0,0,0
-
-; Game state
-cur_word:       times MAX_WORD db 0
-word_len:       dd 0
-wrong:          dd 0
-won:            db 0
-guessed:        times 26 db 0
-reveal:         times MAX_WORD db 0
+        db "ALGORITHM           "
+        db "ASSEMBLY            "
+        db "BOOTSTRAP           "
+        db "COMPILER            "
+        db "DATABASE            "
+        db "DEBUGGER            "
+        db "ENCRYPT             "
+        db "FACTORIAL           "
+        db "GATEWAY             "
+        db "HARDWARE            "
+        db "INTERRUPT           "
+        db "KERNEL              "
+        db "LIBRARY             "
+        db "MEMORY              "
+        db "NETWORK             "
+        db "OPCODE              "
+        db "PIPELINE            "
+        db "QUANTUM             "
+        db "REGISTER            "
+        db "SCHEDULER           "
+        db "TERMINAL            "
+        db "UNICODE             "
+        db "VARIABLE            "
+        db "WRAPPER             "
+        db "XORSHIFT            "
+        db "YIELDING            "
+        db "ZEROING             "
+        db "POINTER             "
+        db "FUNCTION            "
+        db "SEGMENT             "
+        db "PROTOCOL            "
+        db "CHECKSUM            "
+        db "BITFIELD            "
+        db "OVERFLOW            "
+        db "SOCKET              "
+        db "THREAD              "
+        db "PROCESS             "
+        db "VIRTUAL             "
+        db "ENDIAN              "
+        db "SEMAPHORE           "

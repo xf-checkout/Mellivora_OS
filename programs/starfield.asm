@@ -1,19 +1,28 @@
 ; starfield.asm - 3D Starfield Screensaver for Mellivora OS
 ; Classic flying-through-space effect with perspective projection.
-; Press any key to exit.
+; VBE 1024x768x32bpp. Press any key to exit.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
 
-NUM_STARS       equ 80
-SCREEN_W        equ 80
-SCREEN_H        equ 25
-CENTER_X        equ 40
-CENTER_Y        equ 12
-SPEED           equ 3           ; Z decrease per frame
-TICK_DELAY      equ 3           ; ~33fps
-MAX_Z           equ 200
+NUM_STARS       equ 200
+CENTER_X        equ 512
+CENTER_Y        equ 384
+SPEED           equ 4           ; Z decrease per frame
+TICK_DELAY      equ 2           ; ~50fps
+MAX_Z           equ 400
 MIN_Z           equ 1
 
+; colours
+COL_BLACK       equ 0x00000000
+COL_W0          equ 0x00FFFFFF   ; very close
+COL_W1          equ 0x00CCCCCC   ; near
+COL_W2          equ 0x00888888   ; mid
+COL_W3          equ 0x00444444   ; far
+
 start:
+        VBE_GAME_INIT
+
         ; Seed random
         mov eax, SYS_GETTIME
         int 0x80
@@ -39,13 +48,13 @@ start:
 ;=== Main loop ===
 .main_loop:
         ; Check for keypress
-        mov eax, SYS_READ_KEY
-        int 0x80
-        test eax, eax
-        jnz .exit
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        jne .exit
 
-        ; Clear VGA buffer
-        call clear_screen
+        ; Clear shadow buffer to black
+        mov edx, COL_BLACK
+        call vbe_clear_screen
 
         ; Update and draw each star
         xor esi, esi
@@ -65,9 +74,9 @@ start:
 .star_alive:
         mov [star_z + esi*4], eax
 
-        ; Project: screen_x = CENTER_X + (star_x * 128) / star_z
+        ; Project: screen_x = CENTER_X + (star_x * 512) / star_z
         mov eax, [star_x + esi*4]
-        imul eax, 128
+        imul eax, 512
         cdq
         mov ecx, [star_z + esi*4]
         test ecx, ecx
@@ -76,65 +85,65 @@ start:
         add eax, CENTER_X
         mov ebx, eax            ; ebx = screen_x
 
-        ; Project: screen_y = CENTER_Y + (star_y * 64) / star_z
+        ; Project: screen_y = CENTER_Y + (star_y * 512) / star_z
         mov eax, [star_y + esi*4]
-        imul eax, 64
+        imul eax, 512
         cdq
         mov ecx, [star_z + esi*4]
         test ecx, ecx
         jz .star_next
         idiv ecx
         add eax, CENTER_Y
-        mov edx, eax            ; edx = screen_y
+        mov ecx, eax            ; ecx = screen_y
 
-        ; Bounds check
+        ; Bounds check (vbe_plot_pixel clips, but skip off-screen entirely)
         cmp ebx, 0
         jl .star_oob
-        cmp ebx, SCREEN_W
-        jge .star_oob
-        cmp edx, 0
+        cmp ebx, 1023
+        jg .star_oob
+        cmp ecx, 0
         jl .star_oob
-        cmp edx, SCREEN_H
-        jge .star_oob
+        cmp ecx, 767
+        jg .star_oob
 
-        ; Choose star character/color based on Z distance
-        mov ecx, [star_z + esi*4]
-        cmp ecx, 150
-        jg .star_far
-        cmp ecx, 80
-        jg .star_mid
-        cmp ecx, 30
-        jg .star_near
-        ; Very close
-        mov al, 0xDB            ; Full block
-        mov ah, 0x0F            ; Bright white
-        jmp .star_draw
-.star_near:
-        mov al, '*'
-        mov ah, 0x0F
-        jmp .star_draw
-.star_mid:
-        mov al, '+'
-        mov ah, 0x07            ; Gray
-        jmp .star_draw
-.star_far:
-        mov al, 0xFA            ; Dot
-        mov ah, 0x08            ; Dark gray
-
-.star_draw:
-        ; Write to VGA at (ebx, edx)
-        push esi
-        mov ecx, edx
-        imul ecx, SCREEN_W
-        add ecx, ebx
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
-        pop esi
+        ; Choose colour based on Z distance
+        mov eax, [star_z + esi*4]
+        cmp eax, 300
+        jg .col_far
+        cmp eax, 150
+        jg .col_mid
+        cmp eax, 60
+        jg .col_near
+        ; Very close — plot 2×2 block
+        mov edx, COL_W0
+        call vbe_plot_pixel
+        push ebx
+        push ecx
+        inc ebx
+        call vbe_plot_pixel
+        pop ecx
+        pop ebx
+        push ecx
+        inc ecx
+        call vbe_plot_pixel
+        inc ebx
+        call vbe_plot_pixel
+        pop ecx
+        jmp .star_next
+.col_near:
+        mov edx, COL_W1
+        call vbe_plot_pixel
+        jmp .star_next
+.col_mid:
+        mov edx, COL_W2
+        call vbe_plot_pixel
+        jmp .star_next
+.col_far:
+        mov edx, COL_W3
+        call vbe_plot_pixel
         jmp .star_next
 
 .star_oob:
-        ; Star went off-screen, respawn
         call init_star
 
 .star_next:
@@ -142,6 +151,7 @@ start:
         jmp .star_loop
 
 .star_frame_done:
+        VBE_GAME_PRESENT
         ; Frame delay
         mov eax, SYS_SLEEP
         mov ebx, TICK_DELAY
@@ -149,13 +159,10 @@ start:
         jmp .main_loop
 
 .exit:
-        mov eax, SYS_CLEAR
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, COLOR_DEFAULT
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+        xor eax, eax
         int 0x80
 
 ;---------------------------------------
@@ -166,20 +173,20 @@ init_star:
         push ecx
         push edx
 
-        ; Random X: -100 to +100
+        ; Random X: -400 to +400
         call rand
         xor edx, edx
-        mov ecx, 201
+        mov ecx, 801
         div ecx
-        sub edx, 100
+        sub edx, 400
         mov [star_x + esi*4], edx
 
-        ; Random Y: -60 to +60
+        ; Random Y: -300 to +300
         call rand
         xor edx, edx
-        mov ecx, 121
+        mov ecx, 601
         div ecx
-        sub edx, 60
+        sub edx, 300
         mov [star_y + esi*4], edx
 
         ; Z starts at max
@@ -188,18 +195,6 @@ init_star:
         pop edx
         pop ecx
         pop eax
-        ret
-
-;---------------------------------------
-; clear_screen - Fill VGA buffer with black spaces
-;---------------------------------------
-clear_screen:
-        pushad
-        mov edi, VGA_BASE
-        mov eax, 0x00200020     ; Two black spaces
-        mov ecx, SCREEN_W * SCREEN_H / 2
-        rep stosd
-        popad
         ret
 
 ;---------------------------------------

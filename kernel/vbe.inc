@@ -192,6 +192,14 @@ vbe_set_mode:
 
         mov byte [vbe_active], 1
 
+        ; Update mouse bounds to match the new resolution
+        mov eax, [vbe_width]
+        dec eax
+        mov [mouse_max_x], eax
+        mov eax, [vbe_height]
+        dec eax
+        mov [mouse_max_y], eax
+
         ; Allocate shadow buffer for double buffering.
         ; Reallocate whenever the current mode needs more pages than previously allocated.
         ; pages = ceil(width * height * Bpp / 4096)
@@ -370,6 +378,10 @@ vbe_restore_text:
         mov dword [vbe_bpp], 0
         mov dword [vbe_Bpp], 0
         mov dword [vbe_pitch], VGA_WIDTH * 2
+
+        ; Restore mouse bounds to text-mode range
+        mov dword [mouse_max_x], 79
+        mov dword [mouse_max_y], 24
 
         ; Restore VGA font into plane 2
         cmp byte [vbe_font_saved], 1

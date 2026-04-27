@@ -22,10 +22,11 @@ compiler.
 12. [Environment & Arguments](#environment--arguments)
 13. [VBE Pixel Graphics](#vbe-pixel-graphics)
 14. [Game Loop Pattern](#game-loop-pattern)
-15. [Building Assembly Programs](#building-assembly-programs)
-16. [C Programming with TCC](#c-programming-with-tcc)
-17. [Debugging Tips](#debugging-tips)
-18. [Complete Syscall Table](#complete-syscall-table)
+15. [Shared VBE UI Library (v6.1+)](#shared-vbe-ui-library-v61)
+16. [Building Assembly Programs](#building-assembly-programs)
+17. [C Programming with TCC](#c-programming-with-tcc)
+18. [Debugging Tips](#debugging-tips)
+19. [Complete Syscall Table](#complete-syscall-table)
 
 ---
 
@@ -208,14 +209,12 @@ SYS_TASKNAME        equ 78  ; Set task name: EBX=name_ptr
 SYS_REALLOC         equ 79  ; Reallocate: EBX=ptr ECX=new_size EDX=old_size -> EAX=ptr
 SYS_GETENV_SLOT     equ 80  ; Get env slot: EBX=index ECX=buf(128) -> EAX=0/-1
 SYS_DMESG_WRITE     equ 81  ; Write to dmesg log: EBX=msg_ptr
-SYS_SEM_CREATE      equ 88  ; Create semaphore: EBX=initial_value -> EAX=sem_id/-1
-SYS_SEM_WAIT        equ 89  ; Wait (P) semaphore: EBX=sem_id -> EAX=0/-1
-SYS_SEM_POST        equ 90  ; Post (V) semaphore: EBX=sem_id -> EAX=0
-SYS_SEM_CLOSE       equ 91  ; Close semaphore: EBX=sem_id -> EAX=0
-SYS_WAITPID         equ 92  ; Wait for task: EBX=pid -> EAX=exit_code/-1
-SYS_GETMTIME        equ 93  ; Get file timestamps: EBX=name -> EAX=mtime ECX=ctime
-SYS_SETMTIME        equ 94  ; Set file mtime: EBX=name ECX=timestamp(0=now) -> EAX=0/-1
 ```
+
+> The numbers above match `programs/syscalls.inc`. Earlier versions of this
+> guide listed `SYS_SEM_*`, `SYS_WAITPID`, `SYS_GETMTIME`, and `SYS_SETMTIME`
+> at numbers 88-94; those syscalls were never implemented and have been
+> removed.
 
 Or include the provided header:
 
@@ -845,11 +844,11 @@ then call `SYS_FRAMEBUF/4` to blit it to the screen.
 ### Setup
 
 ```nasm
-; 1. Enter VBE mode (640×480×32)
+; 1. Enter VBE mode (1024×768×32)
 mov eax, SYS_FRAMEBUF
 mov ebx, 1          ; sub: set mode
-mov ecx, 640        ; width
-mov edx, 480        ; height
+mov ecx, 1024       ; width
+mov edx, 768        ; height
 mov esi, 32         ; bpp
 int 0x80
 
@@ -1094,6 +1093,73 @@ game_loop:
 game_over: db 0
 goodbye_msg: db "Thanks for playing!", 10, 0
 ```
+
+---
+
+## Shared VBE UI Library (v6.1+)
+
+Two libraries were added in v6.1 to keep the visual style consistent across
+games and apps. New programs should prefer them over hand-rolled UI code.
+
+### `lib/palette.inc` — color constants
+
+A single source of truth for `MV_*` color tones used by the suite. Use these
+instead of hard-coding hex literals so the visual style stays consistent:
+
+```nasm
+%include "lib/palette.inc"
+
+; Common tones
+COL_BG    equ MV_BG_DARK         ; 0x00121212  standard background
+COL_TEXT  equ MV_FG_BRIGHT       ; 0x00EEEEEE  standard text
+COL_OK    equ MV_STATUS_OK       ; 0x0033CC55  success / valid move
+COL_ERR   equ MV_STATUS_ERR      ; 0x00FF4444  error / invalid move
+COL_HEAD  equ MV_BG_BAND         ; 0x00224466  header / status band
+COL_GOLD  equ MV_ACCENT_YELLOW   ; 0x00FFE040  primary accent
+```
+
+See `programs/lib/palette.inc` for the full list (BG, FG, accent, status,
+cursor, board, HUD groups).
+
+### `lib/vbe_ui.inc` — UI widgets
+
+Four high-level widgets that handle the common 1024×768 layout zones:
+
+```nasm
+%include "lib/vbe_ui.inc"        ; auto-includes lib/palette.inc
+
+; Header band at the top of the screen (y=0..22).
+; Title is left-aligned at scale 2, subtitle right-aligned at scale 1.
+mov edx, str_title       ; pointer to NUL-terminated uppercase string
+mov esi, str_subtitle    ; pointer to NUL-terminated uppercase string (or 0)
+call vbe_ui_header_bar
+
+; Status band at the bottom of the screen (y=750..768).
+mov edx, str_keys        ; e.g. "Q=QUIT  R=RESTART  ARROWS=MOVE"
+call vbe_ui_status_bar
+
+; Centered modal dialog (game-over, help, info)
+mov edx, str_modal_title ; e.g. "YOU WIN!"
+mov esi, str_modal_body  ; e.g. "FINAL SCORE: 1500"
+mov edi, MV_STATUS_OK    ; title accent color
+call vbe_ui_modal
+
+; Decimal-number input widget
+mov dword [vbe_ui_input_x],   200
+mov dword [vbe_ui_input_y],   400
+mov dword [vbe_ui_input_max], 5      ; max digits accepted
+call vbe_ui_input_line               ; EAX = parsed integer
+```
+
+All widgets preserve registers via `pushad`/`popad`; the caller is
+responsible for `VBE_GAME_PRESENT`.
+
+### Style guide
+
+See [STYLE_GUIDE.md](STYLE_GUIDE.md) for the authoritative cross-program
+conventions: program skeleton, calling rules, key bindings, layout zones,
+the flat-binary BSS initialization rule (§1.2), and the per-commit
+code-quality checklist.
 
 ---
 

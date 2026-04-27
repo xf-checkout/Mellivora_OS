@@ -4,7 +4,7 @@
 
 **A bare-metal 32-bit x86 operating system written in NASM assembly.**
 
-Mellivora OS is a from-scratch hobby OS that boots on real x86 hardware or in QEMU. It includes a custom HBFS filesystem, ring 3 user-mode execution, a DOS-inspired interactive shell with POSIX features, 94 syscalls, priority-based preemptive scheduling, signal support, an in-OS Tiny C Compiler, 176 assembly programs, and 17 bundled samples (C and Perl).
+Mellivora OS is a from-scratch hobby OS that boots on real x86 hardware or in QEMU. It includes a custom HBFS filesystem, ring 3 user-mode execution, a DOS-inspired interactive shell with POSIX features, 94 syscalls, priority-based preemptive scheduling, signal support, an in-OS Tiny C Compiler, 178 assembly programs, and 17 bundled samples (C and Perl).
 
 > New to the project? Start with the [Installation Guide](docs/INSTALL.md), then try the [Tutorial](docs/TUTORIAL.md) or browse the [Technical Reference](docs/TECHNICAL_REFERENCE.md).
 
@@ -73,7 +73,7 @@ Mellivora OS is a from-scratch hobby OS that boots on real x86 hardware or in QE
 
 ### Programs (176 assembly + 17 bundled samples)
 
-- **Games (42)**: Snake, Tetris, Minesweeper, Sokoban, 2048, Galaga, Game of Life, Maze, Kingdom, Outbreak, Neurovault, Chess, Checkers, Blackjack, Reversi, Pong, Wordle, Rogue, and more
+- **Games (42)**: Snake, Tetris, Minesweeper, Sokoban, 2048, Galaga, Pac-Man, Frogger, Game of Life, Maze, Kingdom, Outbreak, Neurovault, Chess, Checkers, Blackjack, Pong, Wordle, Rogue, and more
 - **HBU (Honey Badger Utilities)**: grep, sort, sed, tr, wc, cut, head, tail, diff, find, uniq, rev, paste, xargs, and more
 - **Tools**: Text editor, hex viewer, file pager, CSV viewer, dual-pane file manager (burrow)
 - **Demos**: Mandelbrot renderer, piano, banner, colors, calendar, calculator, Doom fire effect
@@ -156,7 +156,7 @@ Mellivora_OS/
 ├── kernel.asm              Kernel entry + modular includes (13 files in `kernel/`)
 ├── Makefile                Build system (make full / make run / make debug)
 ├── populate.py             HBFS image populator with subdirectory support
-├── CHANGELOG.md            Version history (v1.0 → v6.0)
+├── CHANGELOG.md            Version history (v1.0 → v7.0)
 ├── README.md               This file
 ├── programs/               User-space assembly programs
 │   ├── syscalls.inc        Shared syscall constants and helpers
@@ -218,7 +218,6 @@ Mellivora_OS/
 | `chess` | Full chess with legal move validation |
 | `checkers` | Checkers with forced-capture rules |
 | `blackjack` | Blackjack (21) card game |
-| `reversi` | Othello / Reversi strategy game |
 | `pong` | Two-paddle Pong |
 | `wordle` | Six-guess word puzzle |
 | `rogue` | ASCII dungeon crawler |
@@ -251,6 +250,10 @@ Mellivora_OS/
 | `solitaire` | Klondike solitaire card game |
 | `worm` | Multi-worm arena game |
 | `breakout` | Breakout / Arkanoid |
+| `pacman` | Pac-Man-style 21×21 maze chase — eat dots and power pellets, hunt or flee 4 ghosts |
+| `frogger` | Road-and-river crossing — dodge traffic, ride logs, fill 5 home slots |
+| `sudoku` | 9×9 Sudoku with conflict highlighting, hints, and persistent solve count |
+| `iago` | Othello / Reversi — VBE board with greedy-AI opponent and persistent wins |
 
 > **42 games total** in `/games` — run any from anywhere thanks to PATH.
 
@@ -272,7 +275,7 @@ Mellivora_OS/
 | `cal` | Calendar with current day highlighted |
 | `calc` | Interactive calculator (+, -, ×, ÷, %) |
 | `mandel` | Mandelbrot set renderer (fixed-point) |
-| `basic` | BASIC language interpreter (interactive & file mode) |
+| `basic` | GW-BASIC-style interpreter with strings, loops, DATA/READ, and file mode |
 | `bf` | Brainfuck interpreter |
 
 ### API Libraries (`programs/lib/` and `programs/`)

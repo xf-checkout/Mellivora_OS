@@ -62,7 +62,7 @@ _CACHE_FILE = ".populate_cache"
 def _load_cache():
     """Load mtime cache from disk.  Returns {} if missing or corrupt."""
     try:
-        with open(_CACHE_FILE, "r") as f:
+        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
@@ -74,7 +74,7 @@ def _load_cache():
 def _save_cache(cache):
     """Persist mtime cache to disk."""
     try:
-        with open(_CACHE_FILE, "w") as f:
+        with open(_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2)
     except OSError as exc:
         print(f"  WARNING: could not write cache file: {exc}")
@@ -216,7 +216,7 @@ class FSImage:
                 return block + 1
         return 0
 
-    def _find_entry_slot(self, directory_buf, max_entries, name):
+    def find_entry_slot(self, directory_buf, max_entries, name):
         """Find an existing filename in a directory buffer."""
         for i in range(max_entries):
             off = i * HBFS_DIR_ENTRY_SIZE
@@ -306,7 +306,7 @@ class FSImage:
 
     def create_subdir(self, dirname):
         """Create a subdirectory in the root directory if missing."""
-        existing_slot = self._find_entry_slot(self.root_dir, HBFS_MAX_FILES,
+        existing_slot = self.find_entry_slot(self.root_dir, HBFS_MAX_FILES,
                                               dirname)
         if existing_slot is not None:
             off = existing_slot * HBFS_DIR_ENTRY_SIZE
@@ -329,6 +329,12 @@ class FSImage:
                 }
                 print(f"  [DIR] /{dirname:18s}         preserved")
                 return block_num
+            else:
+                # Stale non-directory entry with the same name — clear it so
+                # the directory entry can be created cleanly below.
+                self.root_dir[off:off + HBFS_DIR_ENTRY_SIZE] = \
+                    b'\x00' * HBFS_DIR_ENTRY_SIZE
+                print(f"  [CLEAN] cleared stale root entry: {dirname}")
 
         block_num = self._alloc_blocks(HBFS_SUBDIR_BLOCKS)
         data_lba = HBFS_DATA_START + block_num * SECTORS_PER_BLOCK
@@ -389,7 +395,7 @@ class FSImage:
 
         if directory and directory in self.subdirs:
             sd = self.subdirs[directory]
-            slot = self._find_entry_slot(sd['data'], HBFS_SUBDIR_MAX_FILES,
+            slot = self.find_entry_slot(sd['data'], HBFS_SUBDIR_MAX_FILES,
                                          filename)
             if slot is None:
                 slot = self._find_free_slot(sd['data'], HBFS_SUBDIR_MAX_FILES)
@@ -401,7 +407,7 @@ class FSImage:
             sd['entry_count'] = max(sd['entry_count'], slot + 1)
             path_display = f"/{directory}/{filename}"
         else:
-            slot = self._find_entry_slot(self.root_dir, HBFS_MAX_FILES,
+            slot = self.find_entry_slot(self.root_dir, HBFS_MAX_FILES,
                                          filename)
             if slot is None:
                 slot = self._find_free_slot(self.root_dir, HBFS_MAX_FILES)
@@ -417,6 +423,32 @@ class FSImage:
             f"  [{self.total_files:2d}] {path_display:28s}"
             f" {len(data):6d} bytes"
             f"  -> block {block_num} (LBA {data_lba})")
+
+    def cleanup_stale_root_entries(self):
+        """Remove root-level file entries that have been migrated to a subdir.
+
+        When populate.py previously stored programs directly in root and the
+        layout has since changed to use subdirectories, the old root entries
+        persist across incremental runs.  This pass removes them so programs
+        appear only in their canonical subdirectory.
+        """
+        removed = 0
+        for i in range(HBFS_MAX_FILES):
+            off = i * HBFS_DIR_ENTRY_SIZE
+            if not self._entry_used(self.root_dir, off):
+                continue
+            if self.root_dir[off + 253] == FTYPE_DIR:
+                continue  # keep directory entries
+            name = self._entry_name(self.root_dir, off)
+            for sd in self.subdirs.values():
+                if self.find_entry_slot(
+                        sd['data'], HBFS_SUBDIR_MAX_FILES, name) is not None:
+                    self.root_dir[off:off + HBFS_DIR_ENTRY_SIZE] = \
+                        b'\x00' * HBFS_DIR_ENTRY_SIZE
+                    print(f"  [CLEAN] removed stale root entry: {name}")
+                    removed += 1
+                    break
+        return removed
 
     def finalize(self):
         """Write all directory structures and bitmap to disk."""
@@ -713,13 +745,13 @@ BURROWS_PROGRAMS = {
 # Classify programs into categories for subdirectories
 GAME_PROGRAMS = {
     '2048', 'adventure', 'battleship', 'blackjack', 'breakout',
-    'checkers', 'chess', 'connect4', 'doomfire', 'freecell',
+    'checkers', 'chess', 'connect4', 'doomfire', 'frogger',
     'galaga', 'guess', 'hangman', 'kingdom', 'life', 'lights',
     'lolcat', 'lunar', 'mastermind', 'matrix', 'maze', 'mine',
-    'neurovault', 'nim', 'outbreak', 'piano', 'pipes', 'pong',
-    'puzzle15', 'rain', 'reversi', 'rogue', 'simon', 'snake',
-    'sokoban', 'solitaire', 'starfield', 'tetris', 'tictactoe',
-    'wordle', 'worm',
+    'neurovault', 'nim', 'outbreak', 'pacman', 'piano', 'pipes', 'pong',
+    'iago', 'puzzle15', 'rain', 'rogue', 'simon', 'snake',
+    'sokoban', 'solitaire', 'starfield', 'sudoku', 'tetris', 'tictactoe',
+    'wordle',
 }
 
 # Everything else in programs/ goes to /bin
@@ -793,7 +825,7 @@ def main():
                 if fs.preserve_mode and cache.get(fname) == mtime:
                     sd = fs.subdirs.get(target_dir)
                     if sd is not None:
-                        slot = fs._find_entry_slot(
+                        slot = fs.find_entry_slot(
                             sd['data'], HBFS_SUBDIR_MAX_FILES, prog_name
                         )
                         if slot is not None:
@@ -819,6 +851,13 @@ def main():
                     data = f.read()
                 fs.add_file(fname, data.encode('ascii'),
                             directory="samples")
+        for fname in sorted(os.listdir(samples_dir)):
+            if fname.endswith('.bas'):
+                fpath = os.path.join(samples_dir, fname)
+                with open(fpath, 'r', encoding='ascii') as f:
+                    data = f.read()
+                fs.add_file(fname, data.encode('ascii'),
+                            directory="samples")
 
     # Add TempleCode sample programs
     timewarp_src = os.path.join(programs_dir, "timewarp")
@@ -830,6 +869,9 @@ def main():
                     data = f.read()
                 fs.add_file(fname, data.encode('ascii'),
                             directory="timewarp")
+
+    # Remove any root-level entries that have since moved to subdirectories.
+    fs.cleanup_stale_root_entries()
 
     fs.finalize()
 

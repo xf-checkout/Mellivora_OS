@@ -1,5 +1,353 @@
 # Mellivora OS - Changelog
 
+## v7.4.0 - BASIC Expansion
+
+### Changed
+
+- **`basic`** — expanded from a tiny integer-only interpreter into a
+  much larger GW-BASIC-style environment. Added string variables and
+  string functions, `LINE INPUT`, `IF ... THEN ... ELSE`, `WHILE/WEND`,
+  `ON ... GOTO/GOSUB`, `DATA/READ/RESTORE`, `LOCATE`, `SWAP`, `TAB()` /
+  `SPC()`, broader math functions, multi-statement lines with `:`, a
+  `HELP` command, larger program storage, and improved runtime errors.
+
+## v7.3.0 - Bug Fixes & Housekeeping
+
+### Fixed
+
+- **`pacman`**, **`frogger`**, **`sudoku`** — black-screen bug: all three were
+  drawing into the VBE shadow buffer but never calling `VBE_GAME_PRESENT` to
+  blit it to the live framebuffer. Screen now renders correctly on launch.
+
+### Removed
+
+- **`reversi`** — removed from the distribution. The VBE Reversi/Othello
+  experience is covered by **`iago`**, which has a full board renderer,
+  greedy-AI opponent, and persistent win counter.
+
+## v7.2.0 - Arcade Authenticity Pass
+
+### Added
+
+- **`frogger`** — Classic road-and-river crossing. 11 lanes (5 river +
+  median + 5 road), drifting logs/turtles you must ride, oncoming
+  cars/trucks at varying speeds, 5 home slots to fill. 3 lives,
+  persistent high score saved to `/scores/frogger`.
+
+### Changed
+
+- **`galaga`** — Major arcade-faithful overhaul:
+  - Enemies now **dive-bomb** out of the formation in attack runs
+    instead of marching wall-to-wall.
+  - Diving enemies **fire bullets** that can hit the player.
+  - Formation gently **sways** side-to-side as a unit.
+  - Player respawns with **brief invulnerability flicker** when hit;
+    the `lives` counter is finally meaningful (game-over only at 0).
+  - Arcade **2-shot limit** on player bullets.
+  - Arcade-style scoring: bug 50, moth 80, boss 150 — **double** when
+    killed mid-dive.
+  - Stars now **scroll downward** for parallax.
+  - "STAGE N" intro banner between levels.
+
+## v7.1.0 - New Arcade Games
+
+### Added
+
+- **`pacman`** — Pac-Man-style 21x21 maze chase. Eat dots (10 pts) and
+  power pellets (50 pts) while avoiding 4 ghosts. Power pellets
+  frighten ghosts for ~6 sec, allowing you to eat them (200 pts) and
+  send them back to a corner. Persistent high score saved to
+  `/scores/pacman`; win/lose SFX cues at end of round.
+
+## v7.0.1 - Sudoku
+
+### Added
+
+- **`sudoku`** — brand-new 9x9 Sudoku puzzle game.
+  - 4-puzzle bank cycled per session via `SYS_GETTIME`.
+  - Cursor navigation (arrows), digit entry (1–9), clear (0/Space).
+  - Real-time row/column/3x3-box conflict highlighting in red.
+  - `H` hint key fills one missing cell from the solution.
+  - Persistent solve count saved to `/scores/sudoku`; win SFX on solve.
+
+## v7.0.0 - The Hercules Release (Phases 7-8 of Hercules overhaul)
+
+### Release summary
+
+Closes the eight-phase **Hercules** overhaul that began at v6.1. Across
+all phases the project gained shared VBE UI libraries, a universal
+quit-key sweep, the `audio.inc` + `highscore.inc` libraries (v6.5), and
+persistent high-score wiring for **28 games**. v7.0.0 promotes the
+result to a stable release.
+
+### Bumped
+
+- Boot banner, `version_text`, and shell help in `kernel/data.inc`
+  updated from v6.5 → v7.0 ("The Hercules Release").
+- `bsysmon` "OS" field, `neofetch` OS + shell strings, README directory
+  tree, and `docs/INSTALL.md` all bumped to v7.0.
+- "(v6.5+)" annotations in API docs are kept as historical "added-in"
+  markers for the audio + highscore libraries.
+
+### Verified
+
+- Full clean rebuild (`make full`) populates 203 files cleanly with no
+  NASM warnings.
+- All 28 wired games still build and link without changes.
+- No lingering v3.x / v4.x / v5.x version strings in the live banners.
+
+## v6.5.0 - Audio + High-Score Libraries (Phase 6 of Hercules overhaul)
+
+### New shared libraries
+
+- **`programs/lib/audio.inc`** — note table (`NOTE_C2`..`NOTE_C7`),
+  `audio_note`, `audio_rest`, `audio_play_score` (byte-packed melody),
+  `audio_play_score_w` (word-packed for full Hz range), and stock SFX
+  cues `audio_sfx_click`/`_ok`/`_error`/`_win`/`_lose`. All entry points
+  preserve registers; built on `SYS_BEEP` (24).
+- **`programs/lib/highscore.inc`** — `hs_load`, `hs_save`, `hs_update`.
+  Each game's high score lives in `/scores/<name>` as a single
+  little-endian dword. `hs_update` writes only when the candidate beats
+  the stored value. The `/scores` directory is auto-created on first
+  write.
+
+### Wired into existing games
+
+- **`tetris`** — loads/saves high score, displays "High:" under "Score:"
+  in the HUD, plays `audio_sfx_lose` once on game-over.
+- **`2048`** — splits the score panel into SCORE + HIGH boxes, persists
+  high score, plays loss SFX on game-over.
+- **`snake`** — adds `HIGH:` to the score bar, persists high score, plays
+  loss SFX in `show_game_over`.
+- **`breakout`** — adds `HIGH:` to the HUD band, persists high score,
+  plays loss SFX once when lives reach 0.
+- **`simon`** — shows `HIGH` line under the SCORE on the game-over
+  banner, persists best round reached, plays loss SFX once.
+- **`galaga`** — adds `High Score:` line to the game-over panel,
+  persists high score, plays loss SFX.
+- **`mastermind`** — best-game persisted as inverse of guesses-needed
+  (so `hs_update`'s max-wins semantic still picks the better record);
+  win/lose SFX cues. Best record loaded once at start.
+- **`hangman`** — running `WINS:` counter persisted across runs; win/lose
+  SFX cues fired once per round.
+- **`tictactoe`** — persistent `WINS:` counter (player vs CPU) shown
+  under the header; win/lose/draw SFX cues fired once per game.
+- **`connect4`** — wins counter now persists across reboots (loaded into
+  the existing on-screen WINS panel); win/lose/draw SFX cues.
+- **`reversi`** — wins (BLACK > WHITE) persist across runs; win/lose/tie
+  SFX cues fired once at end-of-game.
+- **`wordle`** — total solved-words counter persists across runs;
+  solve / fail SFX cues.
+- **`mine`** (Minesweeper) — total cleared-board wins persist across
+  runs; safe-clear / mine-trigger SFX cues.
+- **`puzzle15`** — total solved-puzzles counter persists across runs;
+  win SFX fires once on each solve.
+- **`lights`** (Lights Out) — total solved-boards counter persists
+  across runs; win SFX cues on each solve.
+- **`sokoban`** — total cleared-levels counter persists across runs;
+  win SFX cues each time a level is cleared.
+- **`guess`** (number guessing) — total correct-guess counter persists
+  across runs; win SFX cues on correct answer.
+- **`battleship`** — total wins persist across runs; win SFX on
+  victory, lose SFX on defeat.
+- **`blackjack`** — total dealer-beating rounds persist across runs;
+  win/lose SFX cues on each settled hand.
+- **`nim`** (misere) — total wins persist across runs (saved to
+  `/scores/nim` after each AI takes the last); win/lose SFX cues.
+- **`checkers`** — total wins (player=red) persist across runs; win/lose
+  SFX cues fired once when the board is decided.
+- **`iago`** (Reversi variant, player=BLACK) — total wins persist
+  across runs; win/lose/tie SFX cues fired once at end-of-game.
+- **`solitaire`** — total completed games persist across runs; win SFX
+  fires once when all 4 foundations are filled.
+- **`pipes`** — high score persists across runs (best score is kept);
+  win/lose SFX cues on flow reaching drain or going dry.
+- **`lunar`** — total safe landings persist across runs (saved to
+  `/scores/lunar` after every soft touchdown); win SFX on safe landing,
+  lose SFX on crash.
+- **`kingdom`** — best end-of-reign score persists across runs; win
+  fanfare SFX on completing 10 years, lose SFX on collapse.
+- **`rogue`** — best XP persists across runs (written when the player
+  dies); lose SFX on death.
+- **`outbreak`** — best total-vaccinated count persists across runs;
+  win SFX on outbreak defeated, lose SFX on collapse.
+
+### `ps` modernized
+
+- Now scans all 128 scheduler slots (was 16) and uses the v4.0 expanded
+  48-byte `SYS_PROCLIST` ABI: shows new `PRI` (priority) column and a
+  16-char `NAME` column.
+- All five live task states have distinct color and label:
+  READY (green), RUNNING (white), BLOCKED (blue), STOPPED (magenta),
+  ZOMBIE (red).
+- Footer now prints a state breakdown:
+  `Active: N  Running: r  Ready: r  Blocked: b  Stopped: s  Zombie: z`.
+
+### `bsysmon` enhancements
+
+- **Live memory** — `Memory:` now reports `USED / TOTAL MB (PCT%)` from
+  `SYS_MEMINFO` (67) plus a 200-pixel horizontal usage bar that turns
+  yellow at ≥70 % and red at ≥90 %.
+- **Uptime** — new `Uptime: Hh Mm Ss` line derived from `SYS_GETTIME`
+  ticks (PIT @ 100 Hz).
+- **Process count** — new `Procs: N active` line that walks the 128-slot
+  task table via `SYS_PROCLIST` (66).
+- **Auto-refresh** — main loop now sleeps 50 ticks (~500 ms) between
+  redraws when no input is pending, so all live values update without
+  user interaction.
+- Window resized to 360×340 to fit the new rows; `OS:` line bumped to
+  v6.5.
+
+### Documentation
+
+- `docs/API_REFERENCE.md` — added Quick Start entries and reference
+  tables for both new libraries.
+
+## v6.4.0 - Universal Quit-Key Sweep (Phase 5 of Hercules overhaul)
+
+### Universal Q + ESC quit
+
+Per `docs/STYLE_GUIDE.md`, every interactive VBE game must accept `ESC`,
+lowercase `q`, AND uppercase `Q` to quit. This release brings 24 games
+into compliance:
+
+- **Added uppercase `Q`** (already had ESC + `q`):
+  `2048`, `battleship`, `blackjack`, `checkers`, `chess`, `connect4`,
+  `guess`, `hangman`, `iago`, `lights`, `lunar`, `mastermind`, `mine`,
+  `nim`, `pipes`, `puzzle15`, `reversi`, `simon`, `sokoban`, `solitaire`
+- **Added `q` and `Q`** (had only ESC):
+  `breakout`, `maze`
+- **Added ESC** (had `q`/`Q` but no ESC):
+  `pong`
+- **Added `Q` and converted raw `27` → `KEY_ESC` style consistency**:
+  `galaga`, `rogue`, `snake`
+- **Added `q`/`Q` to main play loop** (had ESC only):
+  `outbreak` (title + action loop), `kingdom` (title screen)
+
+Demo/screensaver programs (`doomfire`, `matrix`, `rain`, `starfield`,
+`spritetest`) intentionally retain "press any key to exit" behavior.
+
+### Phase 4 — VBE conversion of `adventure.asm` and `neurovault.asm`
+
+**Decision: not converting.** Both are interactive-fiction text adventures
+where text-mode terminal flow IS the appropriate medium. Forcing them
+into a framebuffer would only simulate a terminal inside a pixel surface
+— strictly worse UX for no gain. Their existing VGA text presentation
+remains the right call. Future polish will be limited to text-mode
+banner/prompt consistency.
+
+## v6.3.0 - Style Migration & Doc Refresh (Phases 2-3 of Hercules overhaul)
+
+### Style migration
+
+- **`tictactoe.asm`** — pilot migration to the shared style infrastructure:
+  - Color literals replaced with `MV_*` aliases from `lib/palette.inc`.
+  - Title and status text now drawn by `vbe_ui_header_bar` and
+    `vbe_ui_status_bar` from `lib/vbe_ui.inc`.
+  - `R`/`r` now restarts the game at any time (not just after game-over),
+    matching the style-guide convention.
+
+### Documentation refresh
+
+- **`docs/PROGRAMMING_GUIDE.md`**:
+  - Removed 7 phantom syscall definitions (`SYS_SEM_CREATE`, `SYS_SEM_WAIT`,
+    `SYS_SEM_POST`, `SYS_SEM_CLOSE`, `SYS_WAITPID`, `SYS_GETMTIME`,
+    `SYS_SETMTIME`) that were never implemented.
+  - Fixed VBE example resolution from 640×480 to 1024×768 (matches the
+    actual `VBE_GAME_INIT` macro).
+  - Added a new **Shared VBE UI Library (v6.1+)** section documenting
+    `lib/palette.inc` and `lib/vbe_ui.inc`, with cross-reference to
+    `docs/STYLE_GUIDE.md`.
+  - Updated table of contents.
+- **`docs/API_REFERENCE.md`**:
+  - Fixed VBE example resolution from 640×480 to 1024×768.
+  - Added `lib/vbe.inc`, `lib/font.inc`, `lib/vbe_game.inc`,
+    `lib/palette.inc`, and `lib/vbe_ui.inc` to the Quick Start include
+    list, with a note pointing to `STYLE_GUIDE.md`.
+- **`docs/INSTALL.md`**:
+  - Project structure now reflects current state (~290 programs, current
+    version v6.2.0).
+
+### Audited-clean (no doc changes needed)
+
+`docs/INSTALL.md`, `docs/NETWORKING_GUIDE.md`, `docs/TECHNICAL_REFERENCE.md`,
+`docs/TUTORIAL.md`, `docs/USER_GUIDE.md` were all reviewed and found to
+match the current code state.
+
+## v6.2.0 - Bug Sweep (Phase 1 of Hercules overhaul)
+
+### Initialization-safety fixes (`section .bss` → `dd 0`)
+
+NASM `-f bin` mode places `.bss` labels past the end of the program binary,
+where the kernel loader does NOT zero memory. Variables declared via
+`resd`/`resb` therefore start with whatever junk was left by the previous
+program. Three programs had counters/buffers in `.bss` that could be
+read-before-written; converted them to inline `dd 0` / `times N db 0` so
+they're guaranteed zero at startup:
+
+- **`tetris.asm`** — `fb_addr`, `fb_pitch`, `num_buf`
+- **`typist.asm`** — 14 `dd` counters + `input_buf` (MAX_INPUT bytes)
+- **`bnotes.asm`** — `win_id`, `cursor_pos`, `draw_col`, `note_text`
+
+(See `docs/STYLE_GUIDE.md` §1.2 for the full rule.)
+
+### Audit pass — clean
+
+Audited 20+ programs (VBE games, Burrows GUI apps, CLI utilities) for
+common bug patterns; the following were found to be solid: simon, bedit,
+bcalc, bsysmon, bpaint, bsheet, bplayer, bsettings, bview, bterm, bhive,
+grep, sed, sort, cp, find, wget, dig, asm, bc, diff, tictactoe.
+
+The flip-logic in `iago.asm` was re-audited: logic is correct (the
+previously-fixed `reversi.asm` was the source of the visible flip bug).
+
+### Quality-of-life: universal Q/ESC quit
+
+- **`tetris.asm`** — game-over screen now also accepts `Q`/`q`
+- **`wordle.asm`** — main loop now also accepts `Q`/`q`
+
+## v6.1.0 - Foundation (Phase 0 of Hercules overhaul)
+
+### New shared infrastructure
+
+- **`programs/lib/palette.inc`**: Project-wide color palette. Single source of
+  truth for `MV_BG_*`, `MV_FG_*`, `MV_ACCENT_*`, `MV_STATUS_*`, `MV_CURSOR`,
+  `MV_BOARD_*` and other UI tones. Programs should alias these (e.g.
+  `COL_BG equ MV_BG_DARK`) instead of hard-coding hex literals.
+- **`programs/lib/vbe_ui.inc`**: Shared VBE UI widgets used by all games:
+  - `vbe_ui_header_bar` — top title band
+  - `vbe_ui_status_bar` — bottom hint band
+  - `vbe_ui_modal` — centered dialog (game-over, help, info)
+  - `vbe_ui_input_line` — decimal-number input widget
+- **`docs/STYLE_GUIDE.md`**: New authoritative cross-program style guide
+  documenting program skeleton, calling conventions, syscall rules, VBE
+  layout zones, key-binding standards, the flat-binary BSS rule, the CLI
+  conventions, the Burrows GUI conventions, the uppercase-string rule, and
+  the per-commit code-quality checklist.
+
+### Cleanup
+
+- Removed stale `.bak` files: `edit.asm.bak`, `blackjack.asm.bak`,
+  `tcc.asm.bak`, `outbreak.asm.bak` (~210 KB total).
+
+### Game logic fixes
+
+- **`reversi.asm`**: Fixed two flip-counting bugs that produced incorrect
+  flips and false "invalid move" rejections.
+  - `count_dir`: dotted-local labels `.dr`/`.dc` resolved to the wrong
+    function's locals (always 0). Qualified them as
+    `[count_flips.dr]` / `[count_flips.dc]`.
+  - `flip_dir`: ECX (the flip counter) was being clobbered by a load of
+    `do_move.player` mid-loop. Wrapped the board write with `push ecx` /
+    `pop ecx`.
+
+### kingdom.asm — VBE conversion
+
+- Completed full VGA→VBE conversion (~2400 lines). Replaced text-mode phase
+  screens, status display, mini-bars, and number input with native VBE
+  widgets. Migrated from `section .bss` to flat-binary safe storage.
+  All game strings uppercased to match the 5×7 bitmap font glyph set.
+
 ## v6.0.0 - The Pixel Release
 
 ### Kernel — VBE Double Buffering (`kernel/vbe.inc`)

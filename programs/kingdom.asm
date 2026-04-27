@@ -1,43 +1,54 @@
 ;=======================================================================
-; OUTPOST - A Space Colony Simulation
-; A modern reimagining of the classic KINGDOM (Hamurabi) game
-;
-; You are the Commander of humanity's first colony on Kepler-442b.
-; Manage colonists, food, energy, and territory over 10 years to
-; build a thriving settlement -- or watch it collapse.
-;
-; Each year you must decide:
-;   - Buy or sell land (hectares) at fluctuating prices
-;   - Allocate food rations to your colonists
-;   - Assign colonists to plant and tend crops
-;   - Invest energy into colony defenses and infrastructure
-;
-; Random events: dust storms, alien artifacts, plagues, solar flares,
-; bountiful harvests, supply ship arrivals, and more.
+; OUTPOST - A Space Colony Simulation (VBE Version)
+; VBE 1024x768. Manage colonists, food, energy, territory over 10 years.
 ;=======================================================================
 
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
 
 ;-----------------------------------------------------------------------
-; Constants
+; VBE Colors
 ;-----------------------------------------------------------------------
-; Colors
-C_BLACK     equ 0x00
-C_BLUE      equ 0x01
-C_GREEN     equ 0x02
-C_CYAN      equ 0x03
-C_RED       equ 0x04
-C_MAGENTA   equ 0x05
-C_BROWN     equ 0x06
-C_LGRAY     equ 0x07
-C_DGRAY     equ 0x08
-C_LBLUE     equ 0x09
-C_LGREEN    equ 0x0A
-C_LCYAN     equ 0x0B
-C_LRED      equ 0x0C
-C_LMAGENTA  equ 0x0D
-C_YELLOW    equ 0x0E
-C_WHITE     equ 0x0F
+; Row Y coordinates for VBE layout (line height = 20px)
+ROW0    equ 30
+ROW1    equ 55
+ROW2    equ 80
+ROW3    equ 105
+ROW4    equ 130
+ROW5    equ 155
+ROW6    equ 180
+ROW7    equ 205
+ROW8    equ 230
+ROW9    equ 255
+ROW10   equ 280
+ROW11   equ 305
+ROW12   equ 330
+ROW13   equ 355
+ROW14   equ 380
+ROW15   equ 405
+ROW16   equ 430
+ROW17   equ 455
+ROW18   equ 480
+ROW19   equ 505
+ROW20   equ 530
+ROW21   equ 555
+ROW22   equ 580
+ROWMSG  equ 720
+LX      equ 60      ; left margin X
+
+COL_WHITE   equ 0x00EEEEEE
+COL_YELLOW  equ 0x00FFDD44
+COL_CYAN    equ 0x0044DDFF
+COL_GREEN   equ 0x0044FF88
+COL_RED     equ 0x00FF4444
+COL_GRAY    equ 0x00AAAAAA
+COL_LGRAY   equ 0x00CCCCCC
+COL_DGRAY   equ 0x00666666
+COL_MAGENTA equ 0x00FF44FF
+COL_BG      equ 0x00111118
 
 ; Game parameters
 START_POP       equ 100
@@ -65,6 +76,7 @@ EVT_DISCOVERY   equ 8
 ; ENTRY POINT
 ;=======================================================================
 start:
+        VBE_GAME_INIT
         ; Seed PRNG from system time
         mov eax, SYS_GETTIME
         int 0x80
@@ -73,7 +85,7 @@ start:
         call show_title
 
 .title_loop:
-        mov eax, SYS_GETCHAR
+        mov eax, SYS_READ_KEY
         int 0x80
         cmp al, '1'
         je .start_game
@@ -82,6 +94,10 @@ start:
         cmp al, '3'
         je .quit
         cmp al, 27
+        je .quit
+        cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
         je .quit
         jmp .title_loop
 
@@ -96,13 +112,10 @@ start:
         jmp year_loop
 
 .quit:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+        xor eax, eax
         int 0x80
 
 ;=======================================================================
@@ -110,119 +123,51 @@ start:
 ;=======================================================================
 show_title:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; Top border
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 1
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_border
-        int 0x80
+        mov ebx, 280
+        mov ecx, 100
+        mov edx, str_title1
+        mov esi, COL_CYAN
+        mov eax, 3
+        call vbe_draw_str
 
-        ; Title
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 3
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_title1
-        int 0x80
+        mov ebx, 240
+        mov ecx, 160
+        mov edx, str_title2
+        mov esi, COL_LGRAY
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Subtitle
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_title2
-        int 0x80
+        mov ebx, LX
+        mov ecx, 250
+        mov edx, str_menu1
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Planet art
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov esi, planet_art
-        mov edx, 7
-        mov ecx, 7
-.art_loop:
-        push ecx
-        push edx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 28
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, [esi]
-        int 0x80
-        add esi, 4
-        pop edx
-        pop ecx
-        inc ecx
-        dec edx
-        jnz .art_loop
+        mov ebx, LX
+        mov ecx, 280
+        mov edx, str_menu2
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Bottom border
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 15
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_border
-        int 0x80
+        mov ebx, LX
+        mov ecx, 310
+        mov edx, str_menu3
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Menu
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 26
-        mov ecx, 17
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_menu1
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 26
-        mov ecx, 18
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_menu2
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 26
-        mov ecx, 19
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_menu3
-        int 0x80
+        mov ebx, LX
+        mov ecx, 700
+        mov edx, str_footer
+        mov esi, COL_DGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Footer
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 23
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_footer
-        int 0x80
-
-        ; Title sound
         mov eax, SYS_BEEP
         mov ebx, 330
         mov ecx, 3
@@ -236,6 +181,7 @@ show_title:
         mov ecx, 5
         int 0x80
 
+        VBE_GAME_PRESENT
         popad
         ret
 
@@ -244,54 +190,99 @@ show_title:
 ;=======================================================================
 show_howto:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 20
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_howto_title
-        int 0x80
+        mov ebx, 350
+        mov ecx, ROW0
+        mov edx, str_howto_title
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, ht1
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, ht2
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, ht4
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, ht6
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW6
+        mov edx, ht7
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, ht9
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW8
+        mov edx, ht10
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW9
+        mov edx, ht12
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW10
+        mov edx, ht13
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW11
+        mov edx, ht14
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW13
+        mov edx, ht16
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW14
+        mov edx, ht17
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov esi, howto_lines
-        mov ecx, 2
-        mov edx, 18
-.howto_loop:
-        push ecx
-        push edx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 2
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, [esi]
-        int 0x80
-        add esi, 4
-        pop edx
-        pop ecx
-        inc ecx
-        dec edx
-        jnz .howto_loop
+        mov ebx, LX
+        mov ecx, ROWMSG
+        mov edx, str_press_key
+        mov esi, COL_DGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 23
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_press_key
-        int 0x80
-        mov eax, SYS_GETCHAR
+        VBE_GAME_PRESENT
+
+        mov eax, SYS_READ_KEY
         int 0x80
 
         popad
@@ -302,53 +293,73 @@ show_howto:
 ;=======================================================================
 show_intro:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW1
+        mov edx, intro2
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
-        mov esi, intro_lines
-        mov edx, 12
-        xor ecx, ecx
-.intro_loop:
-        push ecx
-        push edx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, [esi]
-        int 0x80
-        add esi, 4
-
-        mov eax, SYS_SLEEP
-        mov ebx, 25
-        int 0x80
-
-        pop edx
-        pop ecx
-        inc ecx
-        dec edx
-        jnz .intro_loop
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, intro4
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, intro5
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, intro6
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, intro8
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW8
+        mov edx, intro9
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW10
+        mov edx, intro11
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW11
+        mov edx, intro12
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
         mov eax, SYS_BEEP
         mov ebx, 440
         mov ecx, 5
         int 0x80
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 16
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_press_begin
-        int 0x80
-        mov eax, SYS_GETCHAR
+        mov ebx, LX
+        mov ecx, ROWMSG
+        mov edx, str_press_begin
+        mov esi, COL_YELLOW
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
+        mov eax, SYS_READ_KEY
         int 0x80
 
         popad
@@ -419,495 +430,375 @@ year_loop:
 ;=======================================================================
 show_status:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; Status bar
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE | 0x10
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
-        mov ecx, 80
-.stat_space:
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        dec ecx
-        jnz .stat_space
+        ; Header bar
+        mov ebx, 0
+        mov ecx, 0
+        mov edx, 1024
+        mov esi, 22
+        mov edi, 0x00224466
+        call vbe_fill_rect
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 2
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_outpost
-        int 0x80
+        mov ebx, 10
+        mov ecx, 4
+        mov edx, str_outpost
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 60
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_year_lbl
-        int 0x80
-        mov eax, [year]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_of_ten
-        int 0x80
+        mov ebx, 700
+        mov ecx, 4
+        mov edx, str_year_lbl
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
+        mov ebx, 730
+        mov ecx, 4
+        mov edx, [year]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        ; Report header
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_status_hdr
-        int 0x80
+        mov ebx, 742
+        mov ecx, 4
+        mov edx, str_of_ten
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Separator
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 3
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_separator
-        int 0x80
+        ; Section header
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_status_hdr
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
         ; Population
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_pop_lbl
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [population]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_colonists
-        int 0x80
-
-        ; Population bar
-        mov eax, SYS_SETCURSOR
-        mov ebx, 45
-        mov ecx, 5
-        int 0x80
-        mov eax, [population]
-        mov ebx, 10
-        call draw_mini_bar
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_pop_lbl
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 130
+        mov ecx, ROW2
+        mov edx, [population]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
         ; Food
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_food_lbl
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [food]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_units
-        int 0x80
-
-        ; Food bar
-        mov eax, SYS_SETCURSOR
-        mov ebx, 45
-        mov ecx, 7
-        int 0x80
-        mov eax, [food]
-        mov ebx, 200
-        call draw_mini_bar
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, str_food_lbl
+        mov esi, COL_YELLOW
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 130
+        mov ecx, ROW3
+        mov edx, [food]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
         ; Land
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_BROWN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_land_lbl
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [land]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_hectares
-        int 0x80
-
-        ; Land bar
-        mov eax, SYS_SETCURSOR
-        mov ebx, 45
-        mov ecx, 9
-        int 0x80
-        mov eax, [land]
-        mov ebx, 100
-        call draw_mini_bar
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, str_land_lbl
+        mov esi, 0x00AA8844
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 130
+        mov ecx, ROW4
+        mov edx, [land]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
         ; Energy
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        mov ecx, 11
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_energy_lbl
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [energy]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_cells
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, str_energy_lbl
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 130
+        mov ecx, ROW5
+        mov edx, [energy]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
         ; Land price
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 13
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_separator
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, str_price_lbl
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 130
+        mov ecx, ROW7
+        mov edx, [land_price]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 160
+        mov ecx, ROW7
+        mov edx, str_food_per_ha
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        mov ecx, 14
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_price_lbl
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [land_price]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_food_per_ha
-        int 0x80
-
-        ; Show last year's event if any
+        ; Last event message
         cmp dword [last_event], EVT_NONE
         je .no_event_msg
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 16
-        int 0x80
         mov eax, [last_event]
         imul eax, 4
-        mov ebx, [event_msg_table + eax]
-        cmp ebx, 0
+        mov edx, [event_msg_table + eax]
+        cmp edx, 0
         je .no_event_msg
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, [last_event]
-        imul eax, 4
-        mov ebx, [event_msg_table + eax]
-        mov eax, SYS_PRINT
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW9
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
 .no_event_msg:
 
-        ; Show starved/immigrants from last year
+        ; Starvation/immigration from last year
         cmp dword [year], 1
         je .skip_last_year
-
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 18
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-
         cmp dword [last_starved], 0
         je .no_starved_msg
-        mov eax, SYS_PRINT
-        mov ebx, str_starved_pre
-        int 0x80
-        mov eax, [last_starved]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_starved_suf
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW11
+        mov edx, str_starved_pre
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 80
+        mov ecx, ROW11
+        mov edx, [last_starved]
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 110
+        mov ecx, ROW11
+        mov edx, str_starved_suf
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
 .no_starved_msg:
-
         cmp dword [last_immigrants], 0
         je .no_immig_msg
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 19
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_immig_pre
-        int 0x80
-        mov eax, [last_immigrants]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_immig_suf
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW12
+        mov edx, str_immig_pre
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 50
+        mov ecx, ROW12
+        mov edx, [last_immigrants]
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 80
+        mov ecx, ROW12
+        mov edx, str_immig_suf
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
 .no_immig_msg:
-
 .skip_last_year:
-        ; Prompt to continue
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 22
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_press_key
-        int 0x80
-        mov eax, SYS_GETCHAR
+
+        mov ebx, LX
+        mov ecx, ROWMSG
+        mov edx, str_press_key
+        mov esi, COL_DGRAY
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
+        mov eax, SYS_READ_KEY
         int 0x80
 
         popad
         ret
 
 ;---------------------------------------
-; draw_mini_bar: EAX=value, EBX=scale (value/scale = bars, max 20)
+; draw_mini_bar - not used in VBE (kept as stub)
 ;---------------------------------------
 draw_mini_bar:
-        pushad
-        ; bars = min(value / scale, 20)
-        xor edx, edx
-        div ebx
-        cmp eax, 20
-        jle .bar_ok
-        mov eax, 20
-.bar_ok:
-        mov ecx, eax
-        cmp ecx, 0
-        je .bar_done
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-.bar_loop:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 0xDB         ; solid block
-        int 0x80
-        dec ecx
-        jnz .bar_loop
-.bar_done:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        popad
         ret
 
-;=======================================================================
+
 ; PHASE 1: BUY/SELL LAND
 ;=======================================================================
 phase_land:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+
+.pl_render:
+        mov edx, COL_BG
+        call vbe_clear_screen
 
         call draw_phase_header
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_phase_land
-        int 0x80
 
-        ; Show current stats
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_you_have
-        int 0x80
-        mov eax, [land]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_hectares_and
-        int 0x80
-        mov eax, [food]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_food_stored
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_phase_land
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_land_costs
-        int 0x80
-        mov eax, [land_price]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_food_per_ha2
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_you_have
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 60
+        mov ecx, ROW2
+        mov edx, [land]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 95
+        mov ecx, ROW2
+        mov edx, str_hectares_and
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 220
+        mov ecx, ROW2
+        mov edx, [food]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 260
+        mov ecx, ROW2
+        mov edx, str_food_stored
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Ask to buy
-.ask_buy:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        ; Clear line
-        mov eax, SYS_PRINT
-        mov ebx, str_clear_line
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_buy_land
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, str_land_costs
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 75
+        mov ecx, ROW3
+        mov edx, [land_price]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 100
+        mov ecx, ROW3
+        mov edx, str_food_per_ha2
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, str_buy_land
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
+
+        mov dword [rn_py], ROW5
         call read_number
         mov [tmp_val], eax
 
-        ; Validate: cost = amount * land_price
         cmp eax, 0
-        je .ask_sell            ; 0 = skip buying
+        je .pl_ask_sell
 
         mov ebx, [land_price]
         imul eax, ebx
         cmp eax, [food]
-        jle .buy_ok
+        jle .pl_buy_ok
 
-        ; Can't afford
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_cant_afford
-        int 0x80
+        ; Error: can't afford
+        mov dword [.pl_err], 1
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, str_cant_afford
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
         mov eax, SYS_BEEP
         mov ebx, 200
         mov ecx, 2
         int 0x80
-        jmp .ask_buy
+        jmp .pl_render
 
-.buy_ok:
-        ; Apply purchase
+.pl_buy_ok:
         mov eax, [tmp_val]
         add [land], eax
         mov ebx, [land_price]
         imul eax, ebx
         sub [food], eax
-
         mov eax, SYS_BEEP
         mov ebx, 800
         mov ecx, 2
         int 0x80
-
         jmp .land_done
 
-.ask_sell:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_clear_line
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_sell_land
-        int 0x80
+.pl_ask_sell:
+        ; Re-render with sell prompt
+        mov edx, COL_BG
+        call vbe_clear_screen
+        call draw_phase_header
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_phase_land
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_sell_land
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
 
+        mov dword [rn_py], ROW2
         call read_number
         cmp eax, 0
         je .land_done
 
-        ; Can't sell more than you have (keep at least 1)
         mov ebx, [land]
         dec ebx
         cmp eax, ebx
-        jle .sell_ok
+        jle .pl_sell_ok
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 11
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_not_enough_land
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, str_not_enough_land
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
         mov eax, SYS_BEEP
         mov ebx, 200
         mov ecx, 2
         int 0x80
-        jmp .ask_sell
+        jmp .pl_ask_sell
 
-.sell_ok:
-        ; Apply sale
+.pl_sell_ok:
         sub [land], eax
         mov ebx, [land_price]
         imul eax, ebx
         add [food], eax
-
         mov eax, SYS_BEEP
         mov ebx, 800
         mov ecx, 2
@@ -917,110 +808,105 @@ phase_land:
         popad
         ret
 
+.pl_err: dd 0
+
 ;=======================================================================
 ; PHASE 2: FEED COLONISTS
 ;=======================================================================
 phase_feed:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
 
+.pf_render:
+        mov edx, COL_BG
+        call vbe_clear_screen
         call draw_phase_header
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_phase_feed
-        int 0x80
 
-        ; Show info
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_pop_is
-        int 0x80
-        mov eax, [population]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_need
-        int 0x80
-        ; calculate minimum
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_phase_feed
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
+
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_pop_is
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 80
+        mov ecx, ROW2
+        mov edx, [population]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 115
+        mov ecx, ROW2
+        mov edx, str_need
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        ; min food needed
         mov eax, [population]
         imul eax, FOOD_PER_PERSON
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_food_min
-        int 0x80
+        mov ebx, LX + 220
+        mov ecx, ROW2
+        mov edx, eax
+        mov esi, COL_YELLOW
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 260
+        mov ecx, ROW2
+        mov edx, str_food_min
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_food_avail
-        int 0x80
-        mov eax, [food]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_units
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, str_food_avail
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 105
+        mov ecx, ROW3
+        mov edx, [food]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-.ask_feed:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_clear_line
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_feed_how
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, str_feed_how
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
 
+        VBE_GAME_PRESENT
+
+        mov dword [rn_py], ROW5
         call read_number
         mov [food_fed], eax
 
-        ; Can't feed more than available
         cmp eax, [food]
-        jle .feed_ok
+        jle .pf_ok
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_not_enough_food
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, str_not_enough_food
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
         mov eax, SYS_BEEP
         mov ebx, 200
         mov ecx, 2
         int 0x80
-        jmp .ask_feed
+        jmp .pf_render
 
-.feed_ok:
-        ; Deduct food
+.pf_ok:
         mov eax, [food_fed]
         sub [food], eax
-
         mov eax, SYS_BEEP
         mov ebx, 600
         mov ecx, 2
@@ -1034,154 +920,131 @@ phase_feed:
 ;=======================================================================
 phase_plant:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
 
+.pp_render:
+        mov edx, COL_BG
+        call vbe_clear_screen
         call draw_phase_header
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_phase_plant
-        int 0x80
 
-        ; Max plantable = min(land, food/SEED_PER_HECTARE, pop*HECTARES_PER_COLONIST)
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_phase_plant
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Calculate max by food
+        ; Max by food
         mov eax, [food]
         xor edx, edx
         mov ebx, SEED_PER_HECTARE
         div ebx
-        mov [tmp_val], eax     ; max by food
+        mov [tmp_val], eax
 
-        ; Calculate max by labor
+        ; Max by labor
         mov eax, [population]
         imul eax, HECTARES_PER_COLONIST
         cmp eax, [tmp_val]
-        jge .plant_food_limit
-        mov [tmp_val], eax     ; max by labor limit
-.plant_food_limit:
+        jge .pp_food_limit
+        mov [tmp_val], eax
+.pp_food_limit:
         ; Max by land
         mov eax, [land]
         cmp eax, [tmp_val]
-        jge .plant_show
+        jge .pp_show
         mov [tmp_val], eax
-.plant_show:
+.pp_show:
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_land_avail
-        int 0x80
-        mov eax, [land]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_ha
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_land_avail
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 110
+        mov ecx, ROW2
+        mov edx, [land]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_seed_avail
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, str_seed_avail
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
         mov eax, [food]
         xor edx, edx
         mov ebx, SEED_PER_HECTARE
         div ebx
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_ha
-        int 0x80
+        mov ebx, LX + 110
+        mov ecx, ROW3
+        mov edx, eax
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 6
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_labor_avail
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, str_labor_avail
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
         mov eax, [population]
         imul eax, HECTARES_PER_COLONIST
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_ha
-        int 0x80
+        mov ebx, LX + 110
+        mov ecx, ROW4
+        mov edx, eax
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_max_plant
-        int 0x80
-        mov eax, [tmp_val]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_ha
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, str_max_plant
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW5
+        mov edx, [tmp_val]
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_num
 
-.ask_plant:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_clear_line
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_plant_how
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, str_plant_how
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
 
+        VBE_GAME_PRESENT
+
+        mov dword [rn_py], ROW7
         call read_number
         mov [acres_planted], eax
 
-        ; Validate: doesn't exceed max
         cmp eax, [tmp_val]
-        jle .plant_ok
+        jle .pp_ok
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 11
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_too_many_plant
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW9
+        mov edx, str_too_many_plant
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
         mov eax, SYS_BEEP
         mov ebx, 200
         mov ecx, 2
         int 0x80
-        jmp .ask_plant
+        jmp .pp_render
 
-.plant_ok:
-        ; Deduct seed cost
+.pp_ok:
         mov eax, [acres_planted]
         imul eax, SEED_PER_HECTARE
         sub [food], eax
-
         mov eax, SYS_BEEP
         mov ebx, 700
         mov ecx, 2
@@ -1192,6 +1055,7 @@ phase_plant:
 
 ;=======================================================================
 ; SIMULATE YEAR
+;=======================================================================
 ;=======================================================================
 simulate_year:
         pushad
@@ -1445,222 +1309,223 @@ random_event:
 ;=======================================================================
 show_year_results:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
 
+        mov edx, COL_BG
+        call vbe_clear_screen
         call draw_phase_header
 
-        ; Title
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_results_hdr
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_results_hdr
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Harvest
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_harvested
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, [harvest_amount]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_food_from
-        int 0x80
-        mov eax, [acres_planted]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_ha_at
-        int 0x80
-        mov eax, [harvest_yield]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_per_ha
-        int 0x80
+        ; Harvest row
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_harvested
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 80
+        mov ecx, ROW2
+        mov edx, [harvest_amount]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 115
+        mov ecx, ROW2
+        mov edx, str_food_from
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 190
+        mov ecx, ROW2
+        mov edx, [acres_planted]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 220
+        mov ecx, ROW2
+        mov edx, str_ha_at
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 255
+        mov ecx, ROW2
+        mov edx, [harvest_yield]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 275
+        mov ecx, ROW2
+        mov edx, str_per_ha
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
         ; Event
-        mov ecx, 6
         cmp dword [last_event], EVT_NONE
         je .res_no_event
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LMAGENTA
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_event_lbl
-        int 0x80
         mov eax, [last_event]
         imul eax, 4
-        mov ebx, [event_msg_table + eax]
-        mov eax, SYS_PRINT
-        int 0x80
-        mov ecx, 8
+        mov edx, [event_msg_table + eax]
+        test edx, edx
+        jz .res_no_event
+        mov ebx, LX
+        mov ecx, ROW4
+        mov esi, COL_MAGENTA
+        mov eax, 1
+        call vbe_draw_str
 .res_no_event:
 
         ; Starvation
+        mov dword [.row_y], ROW5
         cmp dword [last_starved], 0
         je .res_no_starve
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_starved_res
-        int 0x80
-        mov eax, [last_starved]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_colonists
-        int 0x80
-        inc ecx
-        inc ecx
+        mov ebx, LX
+        mov ecx, [.row_y]
+        mov edx, str_starved_res
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 80
+        mov ecx, [.row_y]
+        mov edx, [last_starved]
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 110
+        mov ecx, [.row_y]
+        mov edx, str_colonists
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        add dword [.row_y], 20
 .res_no_starve:
 
         ; Immigration
         cmp dword [last_immigrants], 0
         je .res_no_immig
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_immig_res
-        int 0x80
-        mov eax, [last_immigrants]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_new_col
-        int 0x80
-        inc ecx
-        inc ecx
+        mov ebx, LX
+        mov ecx, [.row_y]
+        mov edx, str_immig_res
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 50
+        mov ecx, [.row_y]
+        mov edx, [last_immigrants]
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 80
+        mov ecx, [.row_y]
+        mov edx, str_new_col
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        add dword [.row_y], 20
 .res_no_immig:
 
         ; Plague
         cmp dword [plague_flag], 0
         je .res_no_plague
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_plague_msg
-        int 0x80
-        inc ecx
-        inc ecx
+        mov ebx, LX
+        mov ecx, [.row_y]
+        mov edx, str_plague_msg
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        add dword [.row_y], 20
         mov eax, SYS_BEEP
         mov ebx, 150
         mov ecx, 5
         int 0x80
 .res_no_plague:
 
-        ; Final stats
-        push ecx
-        add ecx, 2
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_separator
-        int 0x80
-        pop ecx
+        ; End stats
+        add dword [.row_y], 10
+        mov ecx, [.row_y]
+        mov ebx, LX
+        mov edx, str_end_pop
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 100
+        mov edx, [population]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        add ecx, 3
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_end_pop
-        int 0x80
-        mov eax, [population]
-        call print_number
+        add dword [.row_y], 20
+        mov ecx, [.row_y]
+        mov ebx, LX
+        mov edx, str_end_food
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 100
+        mov edx, [food]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        inc ecx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_end_food
-        int 0x80
-        mov eax, [food]
-        call print_number
+        add dword [.row_y], 20
+        mov ecx, [.row_y]
+        mov ebx, LX
+        mov edx, str_end_land
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 100
+        mov edx, [land]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        inc ecx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_end_land
-        int 0x80
-        mov eax, [land]
-        call print_number
+        add dword [.row_y], 20
+        mov ecx, [.row_y]
+        mov ebx, LX
+        mov edx, str_end_energy
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 100
+        mov edx, [energy]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        inc ecx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 7
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_end_energy
-        int 0x80
-        mov eax, [energy]
-        call print_number
-
-        ; Sound
         mov eax, SYS_BEEP
         mov ebx, 440
         mov ecx, 2
         int 0x80
 
-        ; Wait
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 22
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_press_key
-        int 0x80
-        mov eax, SYS_GETCHAR
+        mov ebx, LX
+        mov ecx, ROWMSG
+        mov edx, str_press_key
+        mov esi, COL_DGRAY
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
+        mov eax, SYS_READ_KEY
         int 0x80
 
         popad
         ret
 
+.row_y: dd 0
+
 ;=======================================================================
 ; GAME OVER SCREENS
 ;=======================================================================
 game_over_dead:
-        mov eax, SYS_CLEAR
-        int 0x80
+        call audio_sfx_lose
+        mov edx, COL_BG
+        call vbe_clear_screen
 
         mov eax, SYS_BEEP
         mov ebx, 200
@@ -1675,82 +1540,72 @@ game_over_dead:
         mov ecx, 8
         int 0x80
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_dead_title
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW2
+        mov edx, str_dead_title
+        mov esi, COL_RED
+        mov eax, 2
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_dead_text1
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, str_dead_text1
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_dead_text2
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW5
+        mov edx, str_dead_text2
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 11
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_dead_text3
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW6
+        mov edx, str_dead_text3
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Stats
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 14
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_lasted
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW8
+        mov edx, str_lasted
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
         mov eax, [year]
         dec eax
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_years
-        int 0x80
+        mov ebx, LX + 90
+        mov ecx, ROW8
+        mov edx, eax
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+        mov ebx, LX + 120
+        mov ecx, ROW8
+        mov edx, str_years
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 15
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_total_lost
-        int 0x80
-        mov eax, [total_starved]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW9
+        mov edx, str_total_lost
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW9
+        mov edx, [total_starved]
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_num
 
         jmp game_exit
 
 game_over_good:
-        mov eax, SYS_CLEAR
-        int 0x80
-
-        ; Calculate rating
-        ; Score based on: final population, total starved, food, land, energy
-        ; simple: pop*3 + food/10 + land/10 + energy/5 - total_starved*5
-
+        ; Calculate score
         mov eax, [population]
         imul eax, 3
         mov [score], eax
@@ -1780,6 +1635,11 @@ game_over_good:
         jge .score_ok
         mov dword [score], 0
 .score_ok:
+        ; Persist best score (only if higher) + win SFX
+        mov esi, hs_name_kd
+        mov ebx, [score]
+        call hs_update
+        call audio_sfx_win
 
         ; Victory fanfare
         mov eax, SYS_BEEP
@@ -1799,143 +1659,122 @@ game_over_good:
         mov ecx, 6
         int 0x80
 
-        ; Title
-        mov eax, SYS_SETCURSOR
-        mov ebx, 12
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_win_title
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; Narrative
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 4
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_win_text1
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 5
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_win_text2
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW0
+        mov edx, str_win_title
+        mov esi, COL_GREEN
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Final Stats
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 7
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_separator
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW3
+        mov edx, str_win_text1
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 9
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_pop
-        int 0x80
-        mov eax, [population]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW4
+        mov edx, str_win_text2
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 10
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_food
-        int 0x80
-        mov eax, [food]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW6
+        mov edx, str_fin_pop
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW6
+        mov edx, [population]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 11
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_land
-        int 0x80
-        mov eax, [land]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW7
+        mov edx, str_fin_food
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW7
+        mov edx, [food]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 12
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_energy
-        int 0x80
-        mov eax, [energy]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW8
+        mov edx, str_fin_land
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW8
+        mov edx, [land]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 13
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_starved
-        int 0x80
-        mov eax, [total_starved]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW9
+        mov edx, str_fin_energy
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW9
+        mov edx, [energy]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 10
-        mov ecx, 14
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_fin_immig
-        int 0x80
-        mov eax, [total_immigrants]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW10
+        mov edx, str_fin_starved
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW10
+        mov edx, [total_starved]
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_num
 
-        ; Score
-        mov eax, SYS_SETCURSOR
-        mov ebx, 5
-        mov ecx, 16
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_separator
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW11
+        mov edx, str_fin_immig
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, LX + 120
+        mov ecx, ROW11
+        mov edx, [total_immigrants]
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_num
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 18
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_score_lbl
-        int 0x80
-        mov eax, [score]
-        call print_number
+        mov ebx, LX
+        mov ecx, ROW13
+        mov edx, str_score_lbl
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, LX + 70
+        mov ecx, ROW13
+        mov edx, [score]
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_num
 
         ; Rating
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        mov ecx, 19
-        int 0x80
-
         mov eax, [score]
         cmp eax, 800
         jge .r_legend
@@ -1945,75 +1784,68 @@ game_over_good:
         jge .r_good
         cmp eax, 100
         jge .r_poor
-        ; terrible
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LRED
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_rate_terrible
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW15
+        mov edx, str_rate_terrible
+        mov esi, COL_RED
+        mov eax, 1
+        call vbe_draw_str
         jmp .r_done
-
 .r_poor:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_BROWN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_rate_poor
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW15
+        mov edx, str_rate_poor
+        mov esi, 0x00AA6622
+        mov eax, 1
+        call vbe_draw_str
         jmp .r_done
-
 .r_good:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LCYAN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_rate_good
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW15
+        mov edx, str_rate_good
+        mov esi, COL_CYAN
+        mov eax, 1
+        call vbe_draw_str
         jmp .r_done
-
 .r_great:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGREEN
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_rate_great
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW15
+        mov edx, str_rate_great
+        mov esi, COL_GREEN
+        mov eax, 1
+        call vbe_draw_str
         jmp .r_done
-
 .r_legend:
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_YELLOW
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_rate_legend
-        int 0x80
+        mov ebx, LX
+        mov ecx, ROW15
+        mov edx, str_rate_legend
+        mov esi, COL_YELLOW
+        mov eax, 1
+        call vbe_draw_str
 .r_done:
 
 game_exit:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 22
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_DGRAY
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_press_key
-        int 0x80
-        mov eax, SYS_GETCHAR
+        mov ebx, LX
+        mov ecx, ROWMSG
+        mov edx, str_press_key
+        mov esi, COL_DGRAY
+        mov eax, 1
+        call vbe_draw_str
+        VBE_GAME_PRESENT
+        mov eax, SYS_READ_KEY
         int 0x80
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+        xor eax, eax
         int 0x80
 
 ;=======================================================================
+; UTILITY FUNCTIONS
+;=======================================================================
+
+;---------------------------------------
 ; UTILITY FUNCTIONS
 ;=======================================================================
 
@@ -2022,62 +1854,82 @@ game_exit:
 ;---------------------------------------
 draw_phase_header:
         pushad
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE | 0x10
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
-        mov ecx, 80
-.dph_sp:
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        dec ecx
-        jnz .dph_sp
+        ; Draw header band
+        mov ebx, 0
+        mov ecx, 0
+        mov edx, 1024
+        mov esi, 22
+        mov edi, 0x00224466
+        call vbe_fill_rect
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 2
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_outpost
-        int 0x80
+        mov ebx, 10
+        mov ecx, 4
+        mov edx, str_outpost
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 60
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, str_year_lbl
-        int 0x80
-        mov eax, [year]
-        call print_number
-        mov eax, SYS_PRINT
-        mov ebx, str_of_ten
-        int 0x80
+        mov ebx, 700
+        mov ecx, 4
+        mov edx, str_year_lbl
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_LGRAY
-        int 0x80
+        mov ebx, 730
+        mov ecx, 4
+        mov edx, [year]
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_num
+
+        mov ebx, 750
+        mov ecx, 4
+        mov edx, str_of_ten
+        mov esi, COL_LGRAY
+        mov eax, 1
+        call vbe_draw_str
+
         popad
         ret
 
 ;---------------------------------------
-; read_number - Read a decimal number from user, return in EAX
+; read_number - VBE input; return in EAX
+; Draws typed digits at (rn_px, rn_py)
 ;---------------------------------------
 read_number:
         pushad
         mov edi, input_buf
         xor ecx, ecx
+        ; Clear input area
+.rn_redraw:
+        mov ebx, [rn_px]
+        mov ecx, [rn_py]
+        mov edx, 120
+        mov esi, 12
+        mov edi, COL_BG
+        call vbe_fill_rect
+        ; Draw current digits
+        mov ebx, [rn_px]
+        mov ecx, [rn_py]
+        mov edx, input_buf
+        mov esi, COL_WHITE
+        mov eax, 1
+        call vbe_draw_str
+        ; Cursor bar
+        mov eax, [rn_len]
+        imul eax, 6
+        add eax, [rn_px]
+        mov ebx, eax
+        mov ecx, [rn_py]
+        mov edx, 5
+        mov esi, 10
+        mov edi, COL_WHITE
+        call vbe_fill_rect
+        VBE_GAME_PRESENT
+        mov edi, input_buf
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, C_WHITE
-        int 0x80
-
-.rn_loop:
-        mov eax, SYS_GETCHAR
+        mov eax, SYS_READ_KEY
         int 0x80
 
         cmp al, 0x0D
@@ -2089,44 +1941,32 @@ read_number:
         cmp al, 0x7F
         je .rn_bs
 
-        ; Only accept digits
         cmp al, '0'
-        jb .rn_loop
+        jb .rn_redraw
         cmp al, '9'
-        ja .rn_loop
+        ja .rn_redraw
 
+        mov ecx, [rn_len]
         cmp ecx, INPUT_MAX - 1
-        jge .rn_loop
+        jge .rn_redraw
 
         mov [edi + ecx], al
         inc ecx
-
-        movzx ebx, al
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        jmp .rn_loop
+        mov byte [edi + ecx], 0
+        mov [rn_len], ecx
+        jmp .rn_redraw
 
 .rn_bs:
+        mov ecx, [rn_len]
         cmp ecx, 0
-        je .rn_loop
+        je .rn_redraw
         dec ecx
-        push ecx
-        mov eax, SYS_PUTCHAR
-        mov ebx, 0x08
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 0x08
-        int 0x80
-        pop ecx
-        jmp .rn_loop
+        mov [rn_len], ecx
+        mov byte [edi + ecx], 0
+        jmp .rn_redraw
 
 .rn_done:
-        mov byte [edi + ecx], 0
-
-        ; Convert string to integer
+        ; Parse input_buf to integer
         mov esi, input_buf
         xor eax, eax
         xor ebx, ebx
@@ -2143,51 +1983,16 @@ read_number:
         add eax, ebx
         inc esi
         jmp .rn_conv
-
 .rn_conv_done:
         mov [tmp_result], eax
+        ; Reset input
+        xor ecx, ecx
+        mov [rn_len], ecx
+        mov byte [input_buf], 0
         popad
         mov eax, [tmp_result]
         ret
 
-;---------------------------------------
-; print_number - Print EAX as decimal
-;---------------------------------------
-print_number:
-        pushad
-        cmp eax, 0
-        jne .pn_nonzero
-        mov eax, SYS_PUTCHAR
-        mov ebx, '0'
-        int 0x80
-        popad
-        ret
-.pn_nonzero:
-        mov ecx, 0
-        mov ebx, 10
-.pn_div:
-        xor edx, edx
-        div ebx
-        push edx
-        inc ecx
-        cmp eax, 0
-        jne .pn_div
-.pn_print:
-        pop edx
-        add edx, '0'
-        push ecx
-        mov eax, SYS_PUTCHAR
-        mov ebx, edx
-        int 0x80
-        pop ecx
-        dec ecx
-        jnz .pn_print
-        popad
-        ret
-
-;---------------------------------------
-; random - LCG PRNG, result in EAX
-;---------------------------------------
 random:
         push ebx
         push edx
@@ -2208,17 +2013,17 @@ random:
 ; === Title ===
 str_border:     db "======================================================================", 0
 str_title1:     db "O U T P O S T  :  K E P L E R", 0
-str_title2:     db "A Space Colony Simulation for Mellivora OS", 0
-str_footer:     db "Inspired by KINGDOM (1968)  |  A Mellivora Production", 0
+str_title2:     db "A SPACE COLONY SIMULATION FOR MELLIVORA OS", 0
+str_footer:     db "INSPIRED BY KINGDOM (1968)  |  A MELLIVORA PRODUCTION", 0
 
-str_menu1:      db "[1] Launch Colony", 0
-str_menu2:      db "[2] How to Play", 0
-str_menu3:      db "[3] Abort Mission", 0
+str_menu1:      db "[1] LAUNCH COLONY", 0
+str_menu2:      db "[2] HOW TO PLAY", 0
+str_menu3:      db "[3] ABORT MISSION", 0
 
 ; Planet art
 p_art1: db "       .  *  .", 0
 p_art2: db "    .  * (   ) *  .", 0
-p_art3: db "   * ( Kepler-442b )", 0
+p_art3: db "   * ( KEPLER-442B )", 0
 p_art4: db "    *  (       )  *", 0
 p_art5: db "       '  *  '", 0
 p_art6: db "      *       *", 0
@@ -2229,23 +2034,23 @@ planet_art: dd p_art1, p_art2, p_art3, p_art4, p_art5, p_art6, p_art7
 ; === How to Play ===
 str_howto_title: db "=== HOW TO PLAY ===", 0
 
-ht1:  db "You are the Commander of humanity's first colony on Kepler-442b.", 0
-ht2:  db "Your mission: keep the colony alive for 10 years.", 0
+ht1:  db "YOU ARE THE COMMANDER OF HUMANITY'S FIRST COLONY ON KEPLER-442B.", 0
+ht2:  db "YOUR MISSION: KEEP THE COLONY ALIVE FOR 10 YEARS.", 0
 ht3:  db " ", 0
-ht4:  db "Each year you make three critical decisions:", 0
+ht4:  db "EACH YEAR YOU MAKE THREE CRITICAL DECISIONS:", 0
 ht5:  db " ", 0
-ht6:  db "  1. LAND - Buy or sell colony territory (hectares).", 0
-ht7:  db "     Land prices fluctuate each year (17-28 food/hectare).", 0
+ht6:  db "  1. LAND - BUY OR SELL COLONY TERRITORY (HECTARES).", 0
+ht7:  db "     LAND PRICES FLUCTUATE EACH YEAR (17-28 FOOD/HECTARE).", 0
 ht8:  db " ", 0
-ht9:  db "  2. FOOD - Feed your colonists. Each needs 20 units/year.", 0
-ht10: db "     If you don't feed enough, colonists starve and die.", 0
+ht9:  db "  2. FOOD - FEED YOUR COLONISTS. EACH NEEDS 20 UNITS/YEAR.", 0
+ht10: db "     IF YOU DON'T FEED ENOUGH, COLONISTS STARVE AND DIE.", 0
 ht11: db " ", 0
-ht12: db "  3. PLANT - Assign hectares to crop production.", 0
-ht13: db "     Planting costs 2 food/hectare as seed. Each colonist", 0
-ht14: db "     can tend up to 10 hectares. Yield varies: 1-6 food/ha.", 0
+ht12: db "  3. PLANT - ASSIGN HECTARES TO CROP PRODUCTION.", 0
+ht13: db "     PLANTING COSTS 2 FOOD/HECTARE AS SEED. EACH COLONIST", 0
+ht14: db "     CAN TEND UP TO 10 HECTARES. YIELD VARIES: 1-6 FOOD/HA.", 0
 ht15: db " ", 0
-ht16: db "Random events -- dust storms, plagues, supply ships, alien", 0
-ht17: db "artifacts -- will test your leadership. Good luck, Commander.", 0
+ht16: db "RANDOM EVENTS -- DUST STORMS, PLAGUES, SUPPLY SHIPS, ALIEN", 0
+ht17: db "ARTIFACTS -- WILL TEST YOUR LEADERSHIP. GOOD LUCK, COMMANDER.", 0
 ht18: db " ", 0
 
 howto_lines: dd ht1, ht2, ht3, ht4, ht5, ht6, ht7, ht8, ht9
@@ -2253,107 +2058,107 @@ howto_lines: dd ht1, ht2, ht3, ht4, ht5, ht6, ht7, ht8, ht9
 
 ; === Intro ===
 intro1:  db " ", 0
-intro2:  db "Mission Log - Kepler Colony Initiative", 0
+intro2:  db "MISSION LOG - KEPLER COLONY INITIATIVE", 0
 intro3:  db " ", 0
-intro4:  db "After 87 years in cryo-sleep, the colony ship PERSEVERANCE", 0
-intro5:  db "has reached Kepler-442b -- a rocky world with a breathable", 0
-intro6:  db "atmosphere orbiting a distant orange star.", 0
+intro4:  db "AFTER 87 YEARS IN CRYO-SLEEP, THE COLONY SHIP PERSEVERANCE", 0
+intro5:  db "HAS REACHED KEPLER-442B -- A ROCKY WORLD WITH A BREATHABLE", 0
+intro6:  db "ATMOSPHERE ORBITING A DISTANT ORANGE STAR.", 0
 intro7:  db " ", 0
-intro8:  db "You have 100 colonists, 2,800 units of food,", 0
-intro9:  db "1,000 hectares of arable land, and 500 energy cells.", 0
+intro8:  db "YOU HAVE 100 COLONISTS, 2,800 UNITS OF FOOD,", 0
+intro9:  db "1,000 HECTARES OF ARABLE LAND, AND 500 ENERGY CELLS.", 0
 intro10: db " ", 0
-intro11: db "The colony must survive 10 years until the next supply", 0
-intro12: db "fleet can reach you. Every decision matters, Commander.", 0
+intro11: db "THE COLONY MUST SURVIVE 10 YEARS UNTIL THE NEXT SUPPLY", 0
+intro12: db "FLEET CAN REACH YOU. EVERY DECISION MATTERS, COMMANDER.", 0
 
 intro_lines: dd intro1, intro2, intro3, intro4, intro5, intro6
              dd intro7, intro8, intro9, intro10, intro11, intro12
 
-str_press_begin: db "Press any key to begin Year 1...", 0
-str_press_key:   db "Press any key to continue...", 0
+str_press_begin: db "PRESS ANY KEY TO BEGIN YEAR 1...", 0
+str_press_key:   db "PRESS ANY KEY TO CONTINUE...", 0
 
 ; === Status Screen ===
 str_outpost:    db "OUTPOST: KEPLER", 0
-str_year_lbl:   db "Year ", 0
+str_year_lbl:   db "YEAR ", 0
 str_of_ten:     db "/10", 0
 str_status_hdr: db "=== COLONY STATUS REPORT ===", 0
 str_separator:  db "----------------------------------------------", 0
 
-str_pop_lbl:    db "Colonists:  ", 0
-str_food_lbl:   db "Food:       ", 0
-str_land_lbl:   db "Territory:  ", 0
-str_energy_lbl: db "Energy:     ", 0
-str_colonists:  db " colonists", 0
-str_units:      db " units", 0
-str_hectares:   db " hectares", 0
-str_cells:      db " cells", 0
-str_price_lbl:  db "Land price: ", 0
-str_food_per_ha: db " food per hectare", 0
+str_pop_lbl:    db "COLONISTS:  ", 0
+str_food_lbl:   db "FOOD:       ", 0
+str_land_lbl:   db "TERRITORY:  ", 0
+str_energy_lbl: db "ENERGY:     ", 0
+str_colonists:  db " COLONISTS", 0
+str_units:      db " UNITS", 0
+str_hectares:   db " HECTARES", 0
+str_cells:      db " CELLS", 0
+str_price_lbl:  db "LAND PRICE: ", 0
+str_food_per_ha: db " FOOD PER HECTARE", 0
 
-str_starved_pre: db "Last year, ", 0
-str_starved_suf: db " colonists starved.", 0
+str_starved_pre: db "LAST YEAR, ", 0
+str_starved_suf: db " COLONISTS STARVED.", 0
 str_immig_pre:   db "  ", 0
-str_immig_suf:   db " new colonists arrived from cryo-pods.", 0
+str_immig_suf:   db " NEW COLONISTS ARRIVED FROM CRYO-PODS.", 0
 
 ; === Phase Prompts ===
 str_phase_land:  db "=== PHASE 1: LAND MANAGEMENT ===", 0
 str_phase_feed:  db "=== PHASE 2: FOOD DISTRIBUTION ===", 0
 str_phase_plant: db "=== PHASE 3: CROP PLANTING ===", 0
 
-str_you_have:       db "You have ", 0
-str_hectares_and:   db " hectares and ", 0
-str_food_stored:    db " units of food in storage.", 0
-str_land_costs:     db "Land costs ", 0
-str_food_per_ha2:   db " food per hectare this year.", 0
+str_you_have:       db "YOU HAVE ", 0
+str_hectares_and:   db " HECTARES AND ", 0
+str_food_stored:    db " UNITS OF FOOD IN STORAGE.", 0
+str_land_costs:     db "LAND COSTS ", 0
+str_food_per_ha2:   db " FOOD PER HECTARE THIS YEAR.", 0
 
-str_buy_land:       db "How many hectares to BUY? (0 = none): ", 0
-str_sell_land:      db "How many hectares to SELL? (0 = none): ", 0
-str_cant_afford:    db "You can't afford that much land!", 0
-str_not_enough_land: db "You don't have that much land to sell!", 0
+str_buy_land:       db "HOW MANY HECTARES TO BUY? (0 = NONE): ", 0
+str_sell_land:      db "HOW MANY HECTARES TO SELL? (0 = NONE): ", 0
+str_cant_afford:    db "YOU CAN'T AFFORD THAT MUCH LAND!", 0
+str_not_enough_land: db "YOU DON'T HAVE THAT MUCH LAND TO SELL!", 0
 
-str_pop_is:         db "Population: ", 0
-str_need:           db ". They need at least ", 0
-str_food_min:       db " food units.", 0
-str_food_avail:     db "Food available: ", 0
-str_feed_how:       db "How many food units to distribute? ", 0
-str_not_enough_food: db "You don't have that much food!", 0
+str_pop_is:         db "POPULATION: ", 0
+str_need:           db ". THEY NEED AT LEAST ", 0
+str_food_min:       db " FOOD UNITS.", 0
+str_food_avail:     db "FOOD AVAILABLE: ", 0
+str_feed_how:       db "HOW MANY FOOD UNITS TO DISTRIBUTE? ", 0
+str_not_enough_food: db "YOU DON'T HAVE THAT MUCH FOOD!", 0
 
-str_land_avail:     db "Colony territory: ", 0
-str_ha:             db " ha", 0
-str_seed_avail:     db "Seed available for: ", 0
-str_labor_avail:    db "Labor capacity: ", 0
-str_max_plant:      db "Maximum plantable: ", 0
-str_plant_how:      db "How many hectares to plant? ", 0
-str_too_many_plant: db "You don't have the resources to plant that much!", 0
+str_land_avail:     db "COLONY TERRITORY: ", 0
+str_ha:             db " HA", 0
+str_seed_avail:     db "SEED AVAILABLE FOR: ", 0
+str_labor_avail:    db "LABOR CAPACITY: ", 0
+str_max_plant:      db "MAXIMUM PLANTABLE: ", 0
+str_plant_how:      db "HOW MANY HECTARES TO PLANT? ", 0
+str_too_many_plant: db "YOU DON'T HAVE THE RESOURCES TO PLANT THAT MUCH!", 0
 
 str_clear_line: db "                                                                  ", 0
 
 ; === Year Results ===
 str_results_hdr: db "=== YEAR-END REPORT ===", 0
-str_harvested:   db "Harvest: ", 0
-str_food_from:   db " food from ", 0
-str_ha_at:       db " ha (yield: ", 0
-str_per_ha:      db "/ha)", 0
-str_event_lbl:   db "Event: ", 0
-str_starved_res: db "Starvation: ", 0
-str_immig_res:   db "Immigration: ", 0
-str_new_col:     db " new colonists arrived.", 0
-str_plague_msg:  db "A PLAGUE swept through the colony! Half the population was lost.", 0
+str_harvested:   db "HARVEST: ", 0
+str_food_from:   db " FOOD FROM ", 0
+str_ha_at:       db " HA (YIELD: ", 0
+str_per_ha:      db "/HA)", 0
+str_event_lbl:   db "EVENT: ", 0
+str_starved_res: db "STARVATION: ", 0
+str_immig_res:   db "IMMIGRATION: ", 0
+str_new_col:     db " NEW COLONISTS ARRIVED.", 0
+str_plague_msg:  db "A PLAGUE SWEPT THROUGH THE COLONY! HALF THE POPULATION WAS LOST.", 0
 
-str_end_pop:     db "Population: ", 0
-str_end_food:    db "Food stores: ", 0
-str_end_land:    db "Territory:   ", 0
-str_end_energy:  db "Energy:      ", 0
+str_end_pop:     db "POPULATION: ", 0
+str_end_food:    db "FOOD STORES: ", 0
+str_end_land:    db "TERRITORY:   ", 0
+str_end_energy:  db "ENERGY:      ", 0
 
 ; === Events ===
 evt_msg_none:   db 0
-evt_msg_dust:   db "A violent dust storm ravaged the croplands!", 0
-evt_msg_plague: db "A mysterious illness spread through the food stores.", 0
-evt_msg_flare:  db "A solar flare damaged the colony's power grid!", 0
-evt_msg_artifact: db "Colonists unearthed an alien energy artifact!", 0
-evt_msg_bount:  db "Ideal weather conditions -- a bountiful growing season!", 0
-evt_msg_supply: db "A supply ship arrived with food and colonists!", 0
-evt_msg_pests:  db "Alien pests infested the food storage silos!", 0
-evt_msg_disc:   db "Scientists discovered a new crop cultivation technique!", 0
+evt_msg_dust:   db "A VIOLENT DUST STORM RAVAGED THE CROPLANDS!", 0
+evt_msg_plague: db "A MYSTERIOUS ILLNESS SPREAD THROUGH THE FOOD STORES.", 0
+evt_msg_flare:  db "A SOLAR FLARE DAMAGED THE COLONY'S POWER GRID!", 0
+evt_msg_artifact: db "COLONISTS UNEARTHED AN ALIEN ENERGY ARTIFACT!", 0
+evt_msg_bount:  db "IDEAL WEATHER CONDITIONS -- A BOUNTIFUL GROWING SEASON!", 0
+evt_msg_supply: db "A SUPPLY SHIP ARRIVED WITH FOOD AND COLONISTS!", 0
+evt_msg_pests:  db "ALIEN PESTS INFESTED THE FOOD STORAGE SILOS!", 0
+evt_msg_disc:   db "SCIENTISTS DISCOVERED A NEW CROP CULTIVATION TECHNIQUE!", 0
 
 event_msg_table:
         dd evt_msg_none, evt_msg_dust, evt_msg_plague, evt_msg_flare
@@ -2362,55 +2167,58 @@ event_msg_table:
 
 ; === Game Over ===
 str_dead_title: db "*** COLONY LOST ***", 0
-str_dead_text1: db "The last colonist has perished. The domes stand silent on", 0
-str_dead_text2: db "the alien plain, slowly being reclaimed by Kepler's dust.", 0
-str_dead_text3: db "Humanity's first colony... has failed.", 0
-str_lasted:     db "Colony lasted: ", 0
-str_years:      db " years.", 0
-str_total_lost: db "Total lives lost: ", 0
+str_dead_text1: db "THE LAST COLONIST HAS PERISHED. THE DOMES STAND SILENT ON", 0
+str_dead_text2: db "THE ALIEN PLAIN, SLOWLY BEING RECLAIMED BY KEPLER'S DUST.", 0
+str_dead_text3: db "HUMANITY'S FIRST COLONY... HAS FAILED.", 0
+str_lasted:     db "COLONY LASTED: ", 0
+str_years:      db " YEARS.", 0
+str_total_lost: db "TOTAL LIVES LOST: ", 0
 
 str_win_title:  db "*** COLONY SURVIVED -- 10 YEARS COMPLETE ***", 0
-str_win_text1:  db "The supply fleet's signal cuts through the static. You've done it.", 0
-str_win_text2:  db "Kepler Colony will endure. Humanity has a new home among the stars.", 0
+str_win_text1:  db "THE SUPPLY FLEET'S SIGNAL CUTS THROUGH THE STATIC. YOU'VE DONE IT.", 0
+str_win_text2:  db "KEPLER COLONY WILL ENDURE. HUMANITY HAS A NEW HOME AMONG THE STARS.", 0
 
-str_fin_pop:     db "Final population:  ", 0
-str_fin_food:    db "Food reserves:     ", 0
-str_fin_land:    db "Territory held:    ", 0
-str_fin_energy:  db "Energy reserves:   ", 0
-str_fin_starved: db "Total lives lost:  ", 0
-str_fin_immig:   db "Total immigrants:  ", 0
+str_fin_pop:     db "FINAL POPULATION:  ", 0
+str_fin_food:    db "FOOD RESERVES:     ", 0
+str_fin_land:    db "TERRITORY HELD:    ", 0
+str_fin_energy:  db "ENERGY RESERVES:   ", 0
+str_fin_starved: db "TOTAL LIVES LOST:  ", 0
+str_fin_immig:   db "TOTAL IMMIGRANTS:  ", 0
 
 str_score_lbl:   db "COLONY SCORE: ", 0
-str_rate_terrible: db "Rating: FAILED STATE - The colony barely survived.", 0
-str_rate_poor:   db "Rating: STRUGGLING  - Many suffered under your command.", 0
-str_rate_good:   db "Rating: ESTABLISHED - A solid foundation for the future.", 0
-str_rate_great:  db "Rating: THRIVING    - An inspiring colony! Well led.", 0
-str_rate_legend: db "Rating: LEGENDARY   - They will name cities after you!", 0
+str_rate_terrible: db "RATING: FAILED STATE - THE COLONY BARELY SURVIVED.", 0
+str_rate_poor:   db "RATING: STRUGGLING  - MANY SUFFERED UNDER YOUR COMMAND.", 0
+str_rate_good:   db "RATING: ESTABLISHED - A SOLID FOUNDATION FOR THE FUTURE.", 0
+str_rate_great:  db "RATING: THRIVING    - AN INSPIRING COLONY! WELL LED.", 0
+str_rate_legend: db "RATING: LEGENDARY   - THEY WILL NAME CITIES AFTER YOU!", 0
 
 ;=======================================================================
-; BSS
+; DATA (runtime variables - flat binary, no .bss)
 ;=======================================================================
-section .bss
 
-rand_seed:          resd 1
-population:         resd 1
-food:               resd 1
-land:               resd 1
-energy:             resd 1
-year:               resd 1
-land_price:         resd 1
-harvest_yield:      resd 1
-harvest_amount:     resd 1
-food_fed:           resd 1
-acres_planted:      resd 1
-last_starved:       resd 1
-last_immigrants:    resd 1
-last_event:         resd 1
-total_starved:      resd 1
-total_immigrants:   resd 1
-max_starved_pct:    resd 1
-plague_flag:        resd 1
-score:              resd 1
-tmp_val:            resd 1
-tmp_result:         resd 1
-input_buf:          resb INPUT_MAX
+rand_seed:          dd 0
+population:         dd 0
+food:               dd 0
+land:               dd 0
+energy:             dd 0
+year:               dd 0
+land_price:         dd 0
+harvest_yield:      dd 0
+harvest_amount:     dd 0
+food_fed:           dd 0
+acres_planted:      dd 0
+last_starved:       dd 0
+last_immigrants:    dd 0
+last_event:         dd 0
+total_starved:      dd 0
+total_immigrants:   dd 0
+max_starved_pct:    dd 0
+plague_flag:        dd 0
+score:              dd 0
+hs_name_kd:         db "kingdom", 0
+tmp_val:            dd 0
+tmp_result:         dd 0
+rn_px:              dd LX + 200
+rn_py:              dd 0
+rn_len:             dd 0
+input_buf:          times INPUT_MAX db 0

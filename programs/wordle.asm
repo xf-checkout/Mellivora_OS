@@ -1,118 +1,132 @@
-; wordle.asm - Word guessing game (Wordle-style) for Mellivora OS
-; Guess the 5-letter word in 6 attempts.
-; Green = correct position, Yellow = wrong position, Gray = not in word
-
+; wordle.asm - Wordle 5-letter word game
+; VBE 1024x768x32bpp. Type A-Z, BKSP=delete, ENTER=submit, ESC=quit.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
 
-WORD_LEN        equ 5
-MAX_TRIES       equ 6
-NUM_WORDS       equ 50
+WORD_LEN    equ 5
+MAX_TRIES   equ 6
+NUM_WORDS   equ 50
+
+BOX_SZ      equ 80
+BOX_GAP     equ 8
+BOX_STEP    equ BOX_SZ + BOX_GAP   ; 88
+; 5 boxes: 5*88-8=432. (1024-432)/2=296
+GRID_X      equ 296
+GRID_Y      equ 100
+
+COL_BG      equ 0x00121213
+COL_EMPTY   equ 0x003A3A3C
+COL_ACTIVE  equ 0x00565758
+COL_GREEN   equ 0x00538D4E
+COL_YELLOW  equ 0x00B59F3B
+COL_GRAY    equ 0x003A3A3C
+COL_TEXT    equ 0x00FFFFFF
+COL_TITLE   equ 0x00FFFFFF
+COL_DIM     equ 0x00888888
+
+FB_EMPTY    equ 0
+FB_YELLOW   equ 2
+FB_GREEN    equ 3
 
 start:
-.new_game:
-        mov eax, SYS_CLEAR
-        int 0x80
-        call pick_secret
-        mov dword [try_num], 0
+        VBE_GAME_INIT
+        call new_game
+        call draw_all
 
-.try_loop:
-        call draw_state
-        cmp dword [try_num], MAX_TRIES
-        jge .lose
+.main_loop:
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .no_key
 
-        call get_word
-        cmp byte [quit_flag], 1
+        cmp al, KEY_ESC
+        je .quit
+        cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
         je .quit
 
-        call evaluate_word
-        ; Check if solved
-        cmp dword [greens], WORD_LEN
-        je .win
+        cmp dword [game_over], 0
+        jne .any_key
 
-        inc dword [try_num]
-        jmp .try_loop
+        cmp al, 0x08
+        je .backspace
+        cmp al, 0x7F
+        je .backspace
 
-.win:
-        call draw_state
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0A
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_win
-        int 0x80
-        mov eax, [try_num]
-        inc eax
-        call print_dec
-        mov eax, SYS_PRINT
-        mov ebx, msg_tries
-        int 0x80
-        jmp .again
+        cmp al, 0x0D
+        je .submit
 
-.lose:
-        call draw_state
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0C
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_lose
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, secret
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
+        ; Letter a-z → uppercase
+        cmp al, 'a'
+        jl .chk_upper
+        cmp al, 'z'
+        jg .no_key
+        sub al, 0x20
+        jmp .add_ltr
+.chk_upper:
+        cmp al, 'A'
+        jl .no_key
+        cmp al, 'Z'
+        jg .no_key
+.add_ltr:
+        cmp dword [cur_len], WORD_LEN
+        jge .no_key
+        mov ecx, [cur_len]
+        mov [cur_input + ecx], al
+        inc dword [cur_len]
+        call draw_all
+        jmp .no_key
 
-.again:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
+.backspace:
+        cmp dword [cur_len], 0
+        je .no_key
+        dec dword [cur_len]
+        call draw_all
+        jmp .no_key
+
+.submit:
+        cmp dword [cur_len], WORD_LEN
+        jne .no_key
+        call evaluate_guess
+        call draw_all
+        jmp .no_key
+
+.any_key:
+        call new_game
+        call draw_all
+        jmp .no_key
+
+.no_key:
+        mov eax, SYS_SLEEP
+        mov ebx, 1
         int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_again
-        int 0x80
-.ag_key:
-        mov eax, SYS_GETCHAR
-        int 0x80
-        cmp al, 'y'
-        je .new_game
-        cmp al, 'Y'
-        je .new_game
-        cmp al, 'n'
-        je .quit
-        cmp al, 'N'
-        je .quit
-        jmp .ag_key
+        jmp .main_loop
 
 .quit:
-        mov eax, SYS_CLEAR
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+        xor eax, eax
         int 0x80
 
-;---------------------------------------
-pick_secret:
+;--------------------------------------
+new_game:
         pushad
         mov eax, SYS_GETTIME
         int 0x80
         xor edx, edx
         mov ecx, NUM_WORDS
         div ecx
-        ; EDX = index
-        imul edx, 8            ; each word padded to 8 bytes
+        imul edx, 8
         lea esi, [word_list + edx]
         mov edi, secret
         mov ecx, WORD_LEN
-.ps_copy:
-        mov al, [esi]
-        mov [edi], al
-        inc esi
-        inc edi
-        dec ecx
-        jnz .ps_copy
-        mov byte [edi], 0
-        mov byte [quit_flag], 0
-        ; Clear guess history
+        rep movsb
+        mov byte [secret + WORD_LEN], 0
+
         mov edi, guesses
         mov ecx, MAX_TRIES * 8
         xor eax, eax
@@ -120,356 +134,354 @@ pick_secret:
         mov edi, fb_buf
         mov ecx, MAX_TRIES * WORD_LEN
         rep stosb
+
+        mov dword [try_num], 0
+        mov dword [cur_len], 0
+        mov dword [game_over], 0
+        ; First-call: load persistent total wins from /scores/wordle
+        cmp byte [hs_loaded], 0
+        jne .ng_done
+        mov byte [hs_loaded], 1
+        mov esi, hs_name_wd
+        call hs_load
+        mov [total_wins], eax
+.ng_done:
         popad
         ret
 
-;---------------------------------------
-get_word:
+;--------------------------------------
+evaluate_guess:
         pushad
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_prompt
-        int 0x80
-
-        xor ecx, ecx           ; char count
-.gw_key:
-        push ecx
-        mov eax, SYS_GETCHAR
-        int 0x80
-        pop ecx
-
-        cmp al, 'q'
-        je .gw_quit_check
-        cmp al, 'Q'
-        je .gw_quit_check
-
-        ; Backspace
-        cmp al, 8
-        je .gw_back
-        cmp al, 127
-        je .gw_back
-
-        ; Enter
-        cmp al, 13
-        je .gw_enter
-        cmp al, 10
-        je .gw_enter
-
-        ; Only letters
-        cmp al, 'A'
-        jl .gw_key
-        cmp al, 'z'
-        jg .gw_key
-        cmp al, 'Z'
-        jle .gw_upper
-        cmp al, 'a'
-        jl .gw_key
-        ; Lowercase — convert to upper
-        sub al, 32
-.gw_upper:
-        cmp ecx, WORD_LEN
-        jge .gw_key             ; already full
-        ; Convert to lowercase for storage
-        add al, 32
-        mov [input_buf + ecx], al
-        ; Echo uppercase
-        push ecx
-        sub al, 32
-        movzx ebx, al
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        pop ecx
-        inc ecx
-        jmp .gw_key
-
-.gw_back:
-        cmp ecx, 0
-        jle .gw_key
-        dec ecx
-        push ecx
-        mov eax, SYS_PUTCHAR
-        mov ebx, 8
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 8
-        int 0x80
-        pop ecx
-        jmp .gw_key
-
-.gw_enter:
-        cmp ecx, WORD_LEN
-        jne .gw_key             ; must be exactly 5 chars
-        mov byte [input_buf + ecx], 0
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        popad
-        ret
-
-.gw_quit_check:
-        cmp ecx, 0
-        jne .gw_key             ; only quit if no chars typed
-        mov byte [quit_flag], 1
-        popad
-        ret
-
-;---------------------------------------
-evaluate_word:
-        pushad
-        mov dword [greens], 0
-
-        ; Copy to history
-        mov ecx, [try_num]
-        shl ecx, 3             ; * 8
-        lea edi, [guesses + ecx]
-        mov esi, input_buf
-        push ecx
+        ; Copy input to history
+        mov eax, [try_num]
+        shl eax, 3
+        lea edi, [guesses + eax]
+        mov esi, cur_input
         mov ecx, WORD_LEN
         rep movsb
-        pop ecx
 
-        ; Track used positions
-        mov dword [s_used], 0
-        mov dword [s_used + 4], 0
+        ; Clear ev_used
+        mov dword [ev_used], 0
+        mov dword [ev_used+4], 0
 
-        ; Feedback index
+        ; fb_buf offset
         mov edx, [try_num]
         imul edx, WORD_LEN
-        ; fb_buf[edx..edx+4] = feedback (0=gray, 1=yellow, 2=green)
 
-        ; Pass 1: green (exact matches)
+        ; Pass 1: greens
         xor ecx, ecx
-.ew_green:
+.eg_g:
         cmp ecx, WORD_LEN
-        jge .ew_pass2
-        mov al, [input_buf + ecx]
+        jge .eg_p2
+        mov al, [cur_input + ecx]
         cmp al, [secret + ecx]
-        jne .ew_gnext
-        mov byte [fb_buf + edx + ecx], 2
-        mov byte [s_used + ecx], 1
-        inc dword [greens]
-.ew_gnext:
+        jne .eg_gn
+        mov byte [fb_buf + edx + ecx], FB_GREEN
+        mov byte [ev_used + ecx], 1
+.eg_gn:
         inc ecx
-        jmp .ew_green
+        jmp .eg_g
 
-.ew_pass2:
-        ; Pass 2: yellow (right letter wrong position)
+.eg_p2:
         xor ecx, ecx
-.ew_yellow:
+.eg_y:
         cmp ecx, WORD_LEN
-        jge .ew_done
-        cmp byte [fb_buf + edx + ecx], 2
-        je .ew_ynext            ; skip greens
-
-        mov al, [input_buf + ecx]
-        ; Search secret for this letter in unused positions
+        jge .eg_done
+        cmp byte [fb_buf + edx + ecx], FB_GREEN
+        je .eg_yn
+        mov al, [cur_input + ecx]
         xor ebx, ebx
-.ew_ysearch:
+.eg_ys:
         cmp ebx, WORD_LEN
-        jge .ew_ynext
-        cmp byte [s_used + ebx], 1
-        je .ew_ysnext
+        jge .eg_yn
+        cmp byte [ev_used + ebx], 1
+        je .eg_ysn
         cmp al, [secret + ebx]
-        jne .ew_ysnext
-        ; Found!
-        mov byte [fb_buf + edx + ecx], 1
-        mov byte [s_used + ebx], 1
-        jmp .ew_ynext
-.ew_ysnext:
+        jne .eg_ysn
+        mov byte [fb_buf + edx + ecx], FB_YELLOW
+        mov byte [ev_used + ebx], 1
+        jmp .eg_yn
+.eg_ysn:
         inc ebx
-        jmp .ew_ysearch
-.ew_ynext:
+        jmp .eg_ys
+.eg_yn:
         inc ecx
-        jmp .ew_yellow
+        jmp .eg_y
 
-.ew_done:
-        popad
-        ret
-
-;---------------------------------------
-draw_state:
-        pushad
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
+.eg_done:
+        ; Count greens
+        xor eax, eax
         xor ecx, ecx
-        int 0x80
-
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_title
-        int 0x80
-
-        ; Show previous guesses with color feedback
-        xor esi, esi
-.ds_row:
-        cmp esi, [try_num]
-        jge .ds_blanks
-
-        mov eax, SYS_PRINT
-        mov ebx, msg_indent
-        int 0x80
-
-        ; Get feedback offset
-        mov edx, esi
-        imul edx, WORD_LEN
-
-        xor ecx, ecx
-.ds_char:
+.eg_wc:
         cmp ecx, WORD_LEN
-        jge .ds_eol
-
-        ; Color based on feedback
-        movzx eax, byte [fb_buf + edx + ecx]
-        cmp eax, 2
-        je .ds_green
-        cmp eax, 1
-        je .ds_yellow
-        ; Gray
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x08
-        int 0x80
-        jmp .ds_letter
-.ds_green:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0A
-        int 0x80
-        jmp .ds_letter
-.ds_yellow:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-
-.ds_letter:
-        ; Print uppercase letter
-        mov eax, esi
-        shl eax, 3
-        movzx ebx, byte [guesses + eax + ecx]
-        sub ebx, 32            ; uppercase
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-
+        jge .eg_wck
+        cmp byte [fb_buf + edx + ecx], FB_GREEN
+        jne .eg_wcn
+        inc eax
+.eg_wcn:
         inc ecx
-        jmp .ds_char
-
-.ds_eol:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        inc esi
-        jmp .ds_row
-
-.ds_blanks:
-        ; Show remaining blank rows
-        mov ecx, [try_num]
-.ds_brow:
-        cmp ecx, MAX_TRIES
-        jge .ds_end
-        push ecx
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x08
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_blank_row
-        int 0x80
-        pop ecx
-        inc ecx
-        jmp .ds_brow
-
-.ds_end:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_legend
-        int 0x80
+        jmp .eg_wc
+.eg_wck:
+        mov dword [cur_len], 0
+        inc dword [try_num]
+        cmp eax, WORD_LEN
+        je .eg_win
+        cmp dword [try_num], MAX_TRIES
+        jge .eg_lose
+        popad
+        ret
+.eg_win:
+        mov dword [game_over], 1
+        ; Bump persistent wins, save, win SFX
+        mov eax, [total_wins]
+        inc eax
+        mov [total_wins], eax
+        mov ebx, [total_wins]
+        mov esi, hs_name_wd
+        call hs_save
+        call audio_sfx_win
+        popad
+        ret
+.eg_lose:
+        mov dword [game_over], 2
+        call audio_sfx_lose
         popad
         ret
 
-;=======================================
-; Data
-;=======================================
-msg_title:      db "  === WORDLE ===", 10, 10, 0
-msg_prompt:     db "  Guess (5 letters): ", 0
-msg_indent:     db "  ", 0
-msg_blank_row:  db "  _ _ _ _ _", 10, 0
-msg_legend:     db "  Green=correct  Yellow=wrong spot  Gray=not in word", 10, 0
-msg_win:        db 10, "  Excellent! You got it in ", 0
-msg_tries:      db " tries!", 10, 0
-msg_lose:       db 10, "  Out of guesses! The word was: ", 0
-msg_again:      db 10, "  Play again? (Y/N) ", 0
+;--------------------------------------
+draw_all:
+        pushad
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-; Word list: 50 common 5-letter words, padded to 8 bytes each
+        ; Title "WORDLE" centered: 6 chars*15px=90, x=(1024-90)/2=467
+        mov ebx, 467
+        mov ecx, 20
+        mov edx, msg_title
+        mov esi, COL_TITLE
+        mov eax, 3
+        call vbe_draw_str
+
+        mov dword [.row], 0
+.da_row:
+        cmp dword [.row], MAX_TRIES
+        jge .da_grid_done
+        mov dword [.col], 0
+.da_col:
+        cmp dword [.col], WORD_LEN
+        jge .da_col_done
+
+        ; Box pixel position
+        mov eax, [.col]
+        imul eax, BOX_STEP
+        add eax, GRID_X
+        mov [.bx], eax
+        mov eax, [.row]
+        imul eax, BOX_STEP
+        add eax, GRID_Y
+        mov [.by], eax
+
+        ; Classify row
+        mov eax, [.row]
+        cmp eax, [try_num]
+        jl .da_subm
+        je .da_cur
+        ; Future empty
+        mov dword [.box_c], COL_EMPTY
+        mov dword [.ltr], 0
+        jmp .da_draw
+
+.da_subm:
+        ; Submitted row
+        mov eax, [.row]
+        imul eax, WORD_LEN
+        add eax, [.col]
+        movzx ecx, byte [fb_buf + eax]
+        cmp ecx, FB_GREEN
+        je .da_s_g
+        cmp ecx, FB_YELLOW
+        je .da_s_y
+        mov dword [.box_c], COL_GRAY
+        jmp .da_s_l
+.da_s_g:
+        mov dword [.box_c], COL_GREEN
+        jmp .da_s_l
+.da_s_y:
+        mov dword [.box_c], COL_YELLOW
+.da_s_l:
+        mov eax, [.row]
+        shl eax, 3
+        add eax, [.col]
+        movzx ecx, byte [guesses + eax]
+        mov [.ltr], ecx
+        jmp .da_draw
+
+.da_cur:
+        ; Active input row
+        mov eax, [.col]
+        cmp eax, [cur_len]
+        jge .da_cur_e
+        movzx ecx, byte [cur_input + eax]
+        mov [.ltr], ecx
+        mov dword [.box_c], COL_ACTIVE
+        jmp .da_draw
+.da_cur_e:
+        mov dword [.box_c], COL_EMPTY
+        mov dword [.ltr], 0
+
+.da_draw:
+        mov ebx, [.bx]
+        mov ecx, [.by]
+        mov edx, BOX_SZ
+        mov esi, BOX_SZ
+        mov edi, [.box_c]
+        call vbe_fill_rect
+
+        cmp dword [.ltr], 0
+        je .da_next
+        ; Center letter (scale=3 → 15×21px) in 80×80 box: offset (32,29)
+        mov ebx, [.bx]
+        add ebx, 32
+        mov ecx, [.by]
+        add ecx, 29
+        mov edx, [.ltr]
+        mov esi, COL_TEXT
+        mov eax, 3
+        call vbe_draw_char
+
+.da_next:
+        inc dword [.col]
+        jmp .da_col
+.da_col_done:
+        inc dword [.row]
+        jmp .da_row
+
+.da_grid_done:
+        mov ecx, GRID_Y + MAX_TRIES * BOX_STEP + 20
+        cmp dword [game_over], 1
+        je .da_win
+        cmp dword [game_over], 2
+        je .da_lose
+
+        mov ebx, GRID_X
+        mov edx, msg_hint
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+        jmp .da_end
+
+.da_win:
+        mov ebx, GRID_X + 80
+        mov edx, msg_win
+        mov esi, COL_GREEN
+        mov eax, 2
+        call vbe_draw_str
+        add ecx, 35
+        mov ebx, GRID_X + 40
+        mov edx, msg_restart
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+        jmp .da_end
+
+.da_lose:
+        mov ebx, GRID_X + 20
+        mov edx, msg_lose
+        mov esi, COL_YELLOW
+        mov eax, 2
+        call vbe_draw_str
+        add ecx, 40
+        mov ebx, GRID_X + 80
+        mov edx, secret
+        mov esi, COL_TEXT
+        mov eax, 3
+        call vbe_draw_str
+        add ecx, 50
+        mov ebx, GRID_X + 40
+        mov edx, msg_restart
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+
+.da_end:
+        VBE_GAME_PRESENT
+        popad
+        ret
+
+.row:   dd 0
+.col:   dd 0
+.bx:    dd 0
+.by:    dd 0
+.box_c: dd 0
+.ltr:   dd 0
+
+;=== Data ===
+msg_title:   db "WORDLE", 0
+msg_hint:    db "A-Z=TYPE  ENTER=SUBMIT  BKSP=DELETE  ESC=QUIT", 0
+msg_win:     db "YOU WIN!", 0
+msg_lose:    db "THE WORD WAS:", 0
+msg_restart: db "ANY KEY = NEW GAME", 0
+
 word_list:
-        db "apple", 0, 0, 0
-        db "brain", 0, 0, 0
-        db "chair", 0, 0, 0
-        db "dance", 0, 0, 0
-        db "early", 0, 0, 0
-        db "flame", 0, 0, 0
-        db "grape", 0, 0, 0
-        db "horse", 0, 0, 0
-        db "index", 0, 0, 0
-        db "jewel", 0, 0, 0
-        db "knife", 0, 0, 0
-        db "lemon", 0, 0, 0
-        db "music", 0, 0, 0
-        db "noble", 0, 0, 0
-        db "ocean", 0, 0, 0
-        db "piano", 0, 0, 0
-        db "queen", 0, 0, 0
-        db "river", 0, 0, 0
-        db "stone", 0, 0, 0
-        db "tiger", 0, 0, 0
-        db "ultra", 0, 0, 0
-        db "voice", 0, 0, 0
-        db "water", 0, 0, 0
-        db "youth", 0, 0, 0
-        db "zebra", 0, 0, 0
-        db "angel", 0, 0, 0
-        db "beach", 0, 0, 0
-        db "cloud", 0, 0, 0
-        db "dream", 0, 0, 0
-        db "eagle", 0, 0, 0
-        db "frost", 0, 0, 0
-        db "ghost", 0, 0, 0
-        db "heart", 0, 0, 0
-        db "ivory", 0, 0, 0
-        db "judge", 0, 0, 0
-        db "knack", 0, 0, 0
-        db "light", 0, 0, 0
-        db "magic", 0, 0, 0
-        db "night", 0, 0, 0
-        db "olive", 0, 0, 0
-        db "pearl", 0, 0, 0
-        db "quiet", 0, 0, 0
-        db "royal", 0, 0, 0
-        db "shine", 0, 0, 0
-        db "trail", 0, 0, 0
-        db "unity", 0, 0, 0
-        db "vigor", 0, 0, 0
-        db "wheat", 0, 0, 0
-        db "chess", 0, 0, 0
-        db "pixel", 0, 0, 0
+        db "APPLE", 0, 0, 0
+        db "BRAIN", 0, 0, 0
+        db "CHAIR", 0, 0, 0
+        db "DANCE", 0, 0, 0
+        db "EARLY", 0, 0, 0
+        db "FLAME", 0, 0, 0
+        db "GRAPE", 0, 0, 0
+        db "HORSE", 0, 0, 0
+        db "INDEX", 0, 0, 0
+        db "JEWEL", 0, 0, 0
+        db "KNIFE", 0, 0, 0
+        db "LEMON", 0, 0, 0
+        db "MUSIC", 0, 0, 0
+        db "NOBLE", 0, 0, 0
+        db "OCEAN", 0, 0, 0
+        db "PIANO", 0, 0, 0
+        db "QUEEN", 0, 0, 0
+        db "RIVER", 0, 0, 0
+        db "STONE", 0, 0, 0
+        db "TIGER", 0, 0, 0
+        db "ULTRA", 0, 0, 0
+        db "VOICE", 0, 0, 0
+        db "WATER", 0, 0, 0
+        db "YOUTH", 0, 0, 0
+        db "ZEBRA", 0, 0, 0
+        db "ANGEL", 0, 0, 0
+        db "BEACH", 0, 0, 0
+        db "CLOUD", 0, 0, 0
+        db "DREAM", 0, 0, 0
+        db "EAGLE", 0, 0, 0
+        db "FROST", 0, 0, 0
+        db "GHOST", 0, 0, 0
+        db "HEART", 0, 0, 0
+        db "IVORY", 0, 0, 0
+        db "JUDGE", 0, 0, 0
+        db "KNACK", 0, 0, 0
+        db "LIGHT", 0, 0, 0
+        db "MAGIC", 0, 0, 0
+        db "NIGHT", 0, 0, 0
+        db "OLIVE", 0, 0, 0
+        db "PEARL", 0, 0, 0
+        db "QUIET", 0, 0, 0
+        db "ROYAL", 0, 0, 0
+        db "SHINE", 0, 0, 0
+        db "TRAIL", 0, 0, 0
+        db "UNITY", 0, 0, 0
+        db "VIGOR", 0, 0, 0
+        db "WHEAT", 0, 0, 0
+        db "CHESS", 0, 0, 0
+        db "PIXEL", 0, 0, 0
 
-; Game state
-secret:         times 8 db 0
-input_buf:      times 8 db 0
-guesses:        times MAX_TRIES * 8 db 0
-fb_buf:         times MAX_TRIES * WORD_LEN db 0
-s_used:         times 8 db 0
-try_num:        dd 0
-greens:         dd 0
-quit_flag:      db 0
+secret:     times 8 db 0
+cur_input:  times 8 db 0
+guesses:    times MAX_TRIES * 8 db 0
+fb_buf:     times MAX_TRIES * WORD_LEN db 0
+ev_used:    times 8 db 0
+try_num:    dd 0
+cur_len:    dd 0
+game_over:  dd 0
+hs_name_wd: db "wordle", 0
+hs_loaded:  db 0
+total_wins: dd 0

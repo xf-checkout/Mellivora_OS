@@ -96,7 +96,7 @@ start:
         mov esi, 32
         int 0x80
         cmp eax, -1
-        je .exit                        ; no VBE available
+        je exit_app                     ; no VBE available
 
         ; Retrieve framebuffer address (EAX) and compute pitch
         mov eax, SYS_FRAMEBUF
@@ -155,11 +155,13 @@ start:
         jmp .main_loop
 
 .do_exit:
+        jmp exit_app
+
+exit_app:
         ; Restore text mode before returning to shell
         mov eax, SYS_FRAMEBUF
         mov ebx, 2
         int 0x80
-.exit:
         mov eax, SYS_EXIT
         int 0x80
 
@@ -359,6 +361,32 @@ draw_toolbar:
         mov ebx, 144
         mov ecx, 4
         mov esi, str_new
+        mov edi, 0x00FFFFFF
+        call fb_draw_text
+
+        ; Open button
+        mov ebx, 180
+        mov ecx, 2
+        mov edx, 44
+        mov esi, 20
+        mov edi, COL_BTN
+        call fb_fill_rect
+        mov ebx, 184
+        mov ecx, 4
+        mov esi, str_open
+        mov edi, 0x00FFFFFF
+        call fb_draw_text
+
+        ; Exit button
+        mov ebx, 228
+        mov ecx, 2
+        mov edx, 36
+        mov esi, 20
+        mov edi, 0x00884444
+        call fb_fill_rect
+        mov ebx, 232
+        mov ecx, 4
+        mov esi, str_exit
         mov edi, 0x00FFFFFF
         call fb_draw_text
 
@@ -667,12 +695,17 @@ draw_output:
 ;---------------------------------------
 draw_status:
         pushad
+        ; Background
         mov ebx, 0
         mov ecx, SB_Y
         mov edx, SCREEN_W
         mov esi, SB_H
         mov edi, COL_STATUS_BG
         call fb_fill_rect
+
+        ; If waiting for open filename, show prompt instead of normal status
+        cmp byte [open_waiting], 1
+        je .status_open_prompt
 
         ; Compose status text: "line:col  mode  hint"
         mov edi, status_buf
@@ -727,7 +760,23 @@ draw_status:
         mov esi, status_buf
         mov edi, 0x00CCCCCC
         call fb_draw_text
+        jmp .status_done
 
+.status_open_prompt:
+        ; Draw "Open: " label in amber
+        mov ebx, 4
+        mov ecx, SB_Y + 2
+        mov esi, str_open_prompt
+        mov edi, 0x00FFCC44
+        call fb_draw_text
+        ; Draw typed filename so far
+        mov ebx, 60
+        mov ecx, SB_Y + 2
+        mov esi, open_fname_buf
+        mov edi, 0x00FFFFFF
+        call fb_draw_text
+
+.status_done:
         popad
         ret
 
@@ -737,6 +786,10 @@ draw_status:
 handle_keypress:
         ; EAX = key code
         pushad
+
+        ; If waiting for open filename, route ALL keys there first
+        cmp byte [open_waiting], 1
+        je .open_mode
 
         ; F5 = Run
         cmp eax, KEY_F5
@@ -876,6 +929,58 @@ handle_keypress:
         dec dword [input_len]
         mov ecx, [input_len]
         mov byte [input_buf + ecx], 0
+        jmp .key_done
+
+.open_mode:
+        ; ESC cancels the open prompt
+        cmp eax, 27
+        jne .open_not_esc
+        mov byte [open_waiting], 0
+        jmp .key_done
+.open_not_esc:
+        ; Enter submits filename and loads file
+        cmp eax, 13
+        je .open_submit
+        ; Backspace
+        cmp eax, 8
+        je .open_bs
+        ; Printable
+        cmp eax, 32
+        jl .key_done
+        cmp eax, 126
+        jg .key_done
+        mov ecx, [open_fname_len]
+        cmp ecx, 62
+        jge .key_done
+        mov [open_fname_buf + ecx], al
+        inc dword [open_fname_len]
+        mov ecx, [open_fname_len]
+        mov byte [open_fname_buf + ecx], 0
+        jmp .key_done
+.open_bs:
+        cmp dword [open_fname_len], 0
+        je .key_done
+        dec dword [open_fname_len]
+        mov ecx, [open_fname_len]
+        mov byte [open_fname_buf + ecx], 0
+        jmp .key_done
+.open_submit:
+        mov byte [open_waiting], 0
+        ; Copy open_fname_buf -> arg_buf
+        mov esi, open_fname_buf
+        mov edi, arg_buf
+        mov ecx, 63
+.open_copy:
+        lodsb
+        stosb
+        test al, al
+        jz .open_copied
+        dec ecx
+        jnz .open_copy
+        mov byte [edi], 0
+.open_copied:
+        mov byte [has_arg], 1
+        call load_file
         jmp .key_done
 
 .key_done:
@@ -1107,6 +1212,18 @@ handle_mouse_click:
         cmp eax, 176
         jle .mc_new
 
+        ; Open button
+        cmp eax, 180
+        jl .mc_done
+        cmp eax, 224
+        jle .mc_open
+
+        ; Exit button
+        cmp eax, 228
+        jl .mc_done
+        cmp eax, 264
+        jle .mc_exit
+
         jmp .mc_done
 
 .mc_run:
@@ -1126,6 +1243,14 @@ handle_mouse_click:
         call turtle_reset
         mov dword [stroke_count], 0
         jmp .mc_done
+.mc_open:
+        ; Start open-file prompt
+        mov byte [open_waiting], 1
+        mov dword [open_fname_len], 0
+        mov byte [open_fname_buf], 0
+        jmp .mc_done
+.mc_exit:
+        jmp exit_app
 
 .check_editor:
         ; Click in editor area?
@@ -3983,7 +4108,10 @@ str_new:        db " New", 0
 str_title_bar:  db "Time Warp for Mellivora", 0
 str_ready:      db "Ready", 0
 str_running:    db "Running...", 0
-str_hint:       db "F5=Run  ESC=Stop  Ctrl+S=Save", 0
+str_hint:       db "F5=Run  ESC=Stop  Ctrl+S=Save  Ctrl+Q=Quit", 0
+str_open:       db "Open", 0
+str_exit:       db "Exit", 0
+str_open_prompt: db "Open: ", 0
 str_overflow:   db "Error: max iterations reached", 0
 str_label_err:  db "Error: label not found", 0
 str_gosub_err:  db "Error: GOSUB stack overflow", 0
@@ -4051,6 +4179,9 @@ tw_fb_addr:     resd 1
 tw_fb_pitch:    resd 1
 tw_mouse_was_down: resb 1
 has_arg:        resb 1
+open_waiting:   resb 1
+open_fname_buf: resb 64
+open_fname_len: resd 1
 
 ; Editor state
 text_buf:       resb MAX_LINES * LINE_LEN       ; 12800 bytes

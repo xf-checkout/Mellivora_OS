@@ -1,5 +1,7 @@
 ; snake.asm - Snake game for Mellivora OS — VBE pixel graphics
 %include "syscalls.inc"
+%include "lib/highscore.inc"
+%include "lib/audio.inc"
 
 SCREEN_W        equ 640
 SCREEN_H        equ 480
@@ -65,6 +67,12 @@ new_game:
         mov dword [snake_len], 3
         mov dword [score], 0
         mov byte  [game_over], 0
+        ; Load high score (returns 0 if missing)
+        push esi
+        mov esi, hs_name_snake
+        call hs_load
+        mov [hi_score], eax
+        pop esi
 
         ; Place snake near centre
         mov eax, BOARD_W / 2 + 2
@@ -104,6 +112,8 @@ game_loop:
         cmp al, 27
         je exit_game
         cmp al, 'q'
+        je exit_game
+        cmp al, 'Q'
         je exit_game
         cmp al, KEY_UP
         je .go_up
@@ -420,6 +430,18 @@ draw_score:
         mov edi, C_SCORE
         call fb_draw_num
 
+        ; High score
+        mov ebx, 200
+        mov ecx, 4
+        mov esi, str_hi
+        mov edi, C_SCORE
+        call fb_draw_text
+        mov eax, [hi_score]
+        mov ebx, 200 + 8 * 6
+        mov ecx, 4
+        mov edi, C_SCORE
+        call fb_draw_num
+
         ; Controls hint
         mov ebx, 300
         mov ecx, 4
@@ -433,6 +455,12 @@ draw_score:
 ;=== show_game_over ===
 show_game_over:
         pushad
+        ; Persist high score and play loss SFX
+        mov esi, hs_name_snake
+        mov ebx, [score]
+        call hs_update
+        mov [hi_score], eax
+        call audio_sfx_lose
         ; Darken center
         mov ebx, 160
         mov ecx, 200
@@ -459,6 +487,8 @@ show_game_over:
         cmp al, 27
         je exit_game
         cmp al, 'q'
+        je exit_game
+        cmp al, 'Q'
         je exit_game
         cmp al, 'r'
         jne .wait_key
@@ -599,6 +629,9 @@ fb_draw_num:
 str_score:      db "Score: ", 0
 str_controls:   db "WASD/Arrows=Move  Q=Quit", 0
 str_gameover:   db "  GAME OVER  ", 0
+str_hi:         db "HIGH:", 0
+hs_name_snake:  db "snake", 0
+hi_score:       dd 0
 str_restart:    db "R=Restart  Q/ESC=Quit", 0
 
 direction:      dd 0

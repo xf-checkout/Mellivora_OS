@@ -1,543 +1,901 @@
-; checkers.asm - Checkers (draughts) game
-; 8x8 board, red (r/R) vs black (b/B), capital = king
-; Player is red (moves up), AI is black (moves down), greedy capture AI
-
+; checkers.asm - Checkers (draughts)
+; VBE 1024x768x32bpp. 8x8 board. Arrow keys + Enter to select/move. Q to quit.
+; Player=Red(moves up), AI=Black(moves down). Kings on back rank.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
 
-EMPTY   equ 0
-RED     equ 1       ; regular red piece
-RED_K   equ 2       ; red king
-BLK     equ 3       ; regular black piece
-BLK_K   equ 4       ; black king
+BSIZE           equ 8
+CELL_SZ         equ 80
+CELL_GAP        equ 2
+GRID_X          equ 100
+GRID_Y          equ 80
+
+EMPTY           equ 0
+RED             equ 1
+RED_K           equ 2
+BLACK           equ 3
+BLACK_K         equ 4
+
+COL_DARK        equ 0x00633B1E
+COL_LIGHT       equ 0x00DEB887
+COL_RED_P       equ 0x00EE2222
+COL_RED_K2      equ 0x00FF8888
+COL_BLK_P       equ 0x00222222
+COL_BLK_K2      equ 0x00888888
+COL_SEL         equ 0x00FFEE44
+COL_CURSOR      equ 0x0044FFCC
+COL_BG          equ 0x000A0A0A
+COL_WHITE       equ 0x00FFFFFF
+COL_GRAY        equ 0x00888888
+COL_GREEN       equ 0x0033EE55
+COL_YELLOW      equ 0x00FFE040
+
+DISC_R          equ 30
+
+; States
+STATE_SELECT    equ 0           ; cursor = pick a piece
+STATE_MOVE      equ 1           ; piece selected, pick destination
 
 start:
-        call init_board
-        call game_loop
-        mov eax, SYS_EXIT
-        xor ebx, ebx
-        int 0x80
+        VBE_GAME_INIT
+        call new_game
+        call draw_all
 
-init_board:
-        ; Clear board
-        mov edi, board
-        mov ecx, 64
+.main_loop:
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .no_key
+
+        cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
+        je .quit
+        cmp al, KEY_ESC
+        je .quit
+
+        cmp dword [game_over], 1
+        je .restart
+
+        cmp al, KEY_UP
+        je .cur_up
+        cmp al, KEY_DOWN
+        je .cur_down
+        cmp al, KEY_LEFT
+        je .cur_left
+        cmp al, KEY_RIGHT
+        je .cur_right
+        cmp al, 0x0D
+        je .action
+        cmp al, 0x08
+        je .cancel
+        jmp .no_key
+
+.cur_up:
+        cmp dword [cur_row], 0
+        je .no_key
+        dec dword [cur_row]
+        jmp .redraw
+.cur_down:
+        cmp dword [cur_row], BSIZE-1
+        je .no_key
+        inc dword [cur_row]
+        jmp .redraw
+.cur_left:
+        cmp dword [cur_col], 0
+        je .no_key
+        dec dword [cur_col]
+        jmp .redraw
+.cur_right:
+        cmp dword [cur_col], BSIZE-1
+        je .no_key
+        inc dword [cur_col]
+        jmp .redraw
+
+.action:
+        cmp dword [state], STATE_SELECT
+        je .select_piece
+        ; Move phase
+        call try_move
+        jmp .redraw
+
+.select_piece:
+        ; Is there a red piece here?
+        mov eax, [cur_row]
+        imul eax, BSIZE
+        add eax, [cur_col]
+        movzx ecx, byte [board + eax]
+        cmp ecx, RED
+        je .sel_ok
+        cmp ecx, RED_K
+        jne .no_key
+.sel_ok:
+        mov eax, [cur_row]
+        mov [sel_row], eax
+        mov eax, [cur_col]
+        mov [sel_col], eax
+        mov dword [state], STATE_MOVE
+        jmp .redraw
+
+.cancel:
+        mov dword [state], STATE_SELECT
+        jmp .redraw
+
+.restart:
+        call new_game
+.redraw:
+        call draw_all
+.no_key:
+        mov eax, SYS_SLEEP
+        mov ebx, 1
+        int 0x80
+        jmp .main_loop
+
+.quit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
         xor eax, eax
-        rep stosb
+        int 0x80
 
-        ; Place black pieces on rows 0-2 (top)
-        mov ebp, 0
-.black_rows:
-        cmp ebp, 3
-        jge .red_rows
-        mov ecx, 0
-.black_cols:
-        cmp ecx, 8
-        jge .black_next_row
-        ; Checkerboard: black squares only
-        mov eax, ebp
-        add eax, ecx
-        and eax, 1
-        cmp eax, 1
-        jne .black_skip
-        mov eax, ebp
-        imul eax, 8
-        add eax, ecx
-        mov byte [board + eax], BLK
-.black_skip:
+;--------------------------------------
+new_game:
+        ; Clear board
+        xor ecx, ecx
+.ng_c:
+        cmp ecx, BSIZE*BSIZE
+        jge .ng_place
+        mov byte [board + ecx], EMPTY
         inc ecx
-        jmp .black_cols
-.black_next_row:
-        inc ebp
-        jmp .black_rows
-
-.red_rows:
-        ; Place red pieces on rows 5-7 (bottom)
-        mov ebp, 5
-.r_rows:
-        cmp ebp, 8
-        jge .init_done
-        mov ecx, 0
-.r_cols:
-        cmp ecx, 8
-        jge .r_next_row
-        mov eax, ebp
-        add eax, ecx
-        and eax, 1
-        cmp eax, 1
-        jne .r_skip
-        mov eax, ebp
-        imul eax, 8
-        add eax, ecx
-        mov byte [board + eax], RED
-.r_skip:
-        inc ecx
-        jmp .r_cols
-.r_next_row:
-        inc ebp
-        jmp .r_rows
-.init_done:
-        ret
-
-game_loop:
-.loop:
-        call draw_board
-        ; Check game over
-        call count_red
-        test eax, eax
-        jz .black_wins
-        call count_black
-        test eax, eax
-        jz .red_wins
-
-        ; Player (red) turn
-        call player_move
-        call count_black
-        test eax, eax
-        jz .red_wins
-
-        ; AI (black) turn
-        call ai_move
-        call count_red
-        test eax, eax
-        jz .black_wins
-
-        jmp .loop
-
-.red_wins:
-        call draw_board
-        mov eax, SYS_PRINT
-        mov ebx, msg_red_wins
-        int 0x80
-        ret
-
-.black_wins:
-        call draw_board
-        mov eax, SYS_PRINT
-        mov ebx, msg_blk_wins
-        int 0x80
-        ret
-
-draw_board:
-        mov eax, SYS_PRINT
-        mov ebx, msg_board_hdr
-        int 0x80
-        mov ebp, 0
-.db_row:
-        cmp ebp, 8
-        jge .db_done
-        ; Row number
-        mov eax, ebp
-        add eax, '1'
-        push eax
-        mov eax, SYS_PUTCHAR
-        pop ebx
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        mov ecx, 0
-.db_col:
-        cmp ecx, 8
-        jge .db_nl
-        mov eax, ebp
-        imul eax, 8
-        add eax, ecx
-        movzx ebx, byte [board + eax]
-        ; Is this a dark square?
-        mov edx, ebp
-        add edx, ecx
-        and edx, 1
-        cmp edx, 0
-        je .db_light
-
-        call draw_piece
-        jmp .db_sep
-.db_light:
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-.db_sep:
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        inc ecx
-        jmp .db_col
-.db_nl:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 10
-        int 0x80
-        inc ebp
-        jmp .db_row
-.db_done:
-        mov eax, SYS_PRINT
-        mov ebx, msg_col_hdr
-        int 0x80
-        ret
-
-draw_piece:
-        ; EBX = piece value
-        cmp ebx, EMPTY
-        jne .dp_piece
-        mov eax, SYS_PUTCHAR
-        mov ebx, '.'
-        int 0x80
-        ret
-.dp_piece:
-        cmp ebx, RED
-        jne .dp_blk
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'r'
-        int 0x80
-        ret
-.dp_blk:
-        cmp ebx, RED_K
-        jne .dp_blkk
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'R'
-        int 0x80
-        ret
-.dp_blkk:
-        cmp ebx, BLK
-        jne .dp_blkking
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'b'
-        int 0x80
-        ret
-.dp_blkking:
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'B'
-        int 0x80
-        ret
-
-player_move:
-        mov eax, SYS_PRINT
-        mov ebx, msg_your_move
-        int 0x80
-.ask:
-        mov eax, SYS_PRINT
-        mov ebx, msg_from
-        int 0x80
-        mov eax, SYS_STDIN_READ
-        mov ebx, input_buf
-        mov ecx, 10
-        int 0x80
-        ; Parse "RC" -> from_row, from_col (1-based input)
-        movzx eax, byte [input_buf]
-        sub eax, '1'
-        cmp eax, 7
-        ja .ask
-        mov [from_row], eax
-        movzx eax, byte [input_buf + 1]
-        sub eax, '1'
-        cmp eax, 7
-        ja .ask
-        mov [from_col], eax
-
-        ; Validate: must be red piece
-        mov eax, [from_row]
-        imul eax, 8
-        add eax, [from_col]
-        movzx ebx, byte [board + eax]
-        cmp ebx, RED
-        je .from_ok
-        cmp ebx, RED_K
-        je .from_ok
-        jmp .ask
-
-.from_ok:
-        mov eax, SYS_PRINT
-        mov ebx, msg_to
-        int 0x80
-        mov eax, SYS_STDIN_READ
-        mov ebx, input_buf
-        mov ecx, 10
-        int 0x80
-        movzx eax, byte [input_buf]
-        sub eax, '1'
-        cmp eax, 7
-        ja .ask
-        mov [to_row], eax
-        movzx eax, byte [input_buf + 1]
-        sub eax, '1'
-        cmp eax, 7
-        ja .ask
-        mov [to_col], eax
-
-        ; Validate destination is empty
-        mov eax, [to_row]
-        imul eax, 8
-        add eax, [to_col]
-        movzx ebx, byte [board + eax]
-        cmp ebx, EMPTY
-        jne .ask
-
-        ; Validate diagonal move
-        mov eax, [to_row]
-        sub eax, [from_row]
-        mov [dr], eax
-        mov eax, [to_col]
-        sub eax, [from_col]
-        mov [dc], eax
-        ; dr must be -1 or -2 (red moves up = decreasing row) or ±1/±2 for king
-        ; Simplified: check |dr| = |dc| = 1 (regular) or 2 (capture)
-        mov eax, [dr]
-        test eax, eax
-        jns .check_abs_dr
-        neg eax
-.check_abs_dr:
-        mov edx, eax        ; save |dr| in EDX
-        cmp eax, 1
-        je .check_dc
-        cmp eax, 2
-        jne .ask
-.check_dc:
-        mov eax, [dc]
-        test eax, eax
-        jns .check_abs_dc
-        neg eax
-.check_abs_dc:
-        cmp eax, edx
-        jne .ask    ; |dr| != |dc|
-
-        ; Check red pieces move up (dr < 0) unless king
-        mov eax, [from_row]
-        imul eax, 8
-        add eax, [from_col]
-        movzx ebx, byte [board + eax]
-        cmp ebx, RED_K
-        je .do_move
-        ; Regular red: must move up (dr < 0)
-        cmp dword [dr], 0
-        jge .ask
-
-.do_move:
-        ; If capture (dr=±2), remove jumped piece
-        mov eax, [dr]
-        test eax, eax
-        jns .dr_pos_cap
-        cmp eax, -2
-        jne .execute
-        ; Capture
-        mov eax, [from_row]
-        add eax, -1        ; mid_row = from_row - 1
-        imul eax, 8
-        mov ecx, [from_col]
-        add ecx, [dc]
-        sar dword [dc + 0], 1   ; dc / 2 ... wait, this is tricky
-        ; Let me just compute mid cell
-        mov eax, [from_row]
-        add eax, [to_row]
-        sar eax, 1
-        imul eax, 8
-        mov ecx, [from_col]
-        add ecx, [to_col]
-        sar ecx, 1
-        add eax, ecx
-        mov byte [board + eax], EMPTY
-        jmp .execute
-.dr_pos_cap:
-        cmp eax, 2
-        jne .execute
-        mov eax, [from_row]
-        add eax, [to_row]
-        sar eax, 1
-        imul eax, 8
-        mov ecx, [from_col]
-        add ecx, [to_col]
-        sar ecx, 1
-        add eax, ecx
-        mov byte [board + eax], EMPTY
-
-.execute:
-        ; Get piece
-        mov eax, [from_row]
-        imul eax, 8
-        add eax, [from_col]
-        movzx ebx, byte [board + eax]
-        mov byte [board + eax], EMPTY
-        ; Move piece
-        mov eax, [to_row]
-        imul eax, 8
-        add eax, [to_col]
-        mov [board + eax], bl
-        ; King promotion: red reaches row 0
-        cmp dword [to_row], 0
-        jne .pm_done
-        cmp byte [board + eax], RED
-        jne .pm_done
-        mov byte [board + eax], RED_K
-.pm_done:
-        ret
-
-; Simple AI: scan for any capture, else move forward
-ai_move:
-        ; Try to find a capture
-        mov ebp, 0
-.ai_scan:
-        cmp ebp, 64
-        jge .ai_simple
-        movzx eax, byte [board + ebp]
-        cmp eax, BLK
-        je .ai_try_cap
-        cmp eax, BLK_K
-        je .ai_try_cap
-        jmp .ai_next
-.ai_try_cap:
-        ; Try each diagonal capture
-        mov eax, ebp
+        jmp .ng_c
+.ng_place:
+        ; Black pieces: rows 0-2, dark squares
+        ; Red pieces: rows 5-7, dark squares
+        xor ecx, ecx
+.ng_loop:
+        cmp ecx, BSIZE*BSIZE
+        jge .ng_done
+        mov eax, ecx
         xor edx, edx
-        mov ecx, 8
-        div ecx
-        ; EAX=row, EDX=col
+        mov ebx, BSIZE
+        div ebx             ; EAX=row, EDX=col
+        ; Dark square: (row+col) odd
+        mov ebx, eax
+        add ebx, edx
+        test ebx, 1
+        jz .ng_skip
+        cmp eax, 3
+        jl .ng_black
+        cmp eax, 5
+        jl .ng_skip
+        ; Red piece
+        mov byte [board + ecx], RED
+        jmp .ng_skip
+.ng_black:
+        mov byte [board + ecx], BLACK
+.ng_skip:
+        inc ecx
+        jmp .ng_loop
+.ng_done:
+        mov dword [cur_row], 5
+        mov dword [cur_col], 0
+        mov dword [sel_row], -1
+        mov dword [sel_col], -1
+        mov dword [state], STATE_SELECT
+        mov dword [game_over], 0
+        mov byte [result_played], 0
+        ; First-call: load persistent wins from /scores/checkers
+        cmp byte [hs_loaded], 0
+        jne .ng_loaded
+        mov byte [hs_loaded], 1
+        pushad
+        mov esi, hs_name_ck
+        call hs_load
+        mov [total_wins], eax
+        popad
+.ng_loaded:
+        ret
+
+;--------------------------------------
+; try_move: attempt to move sel→cur (player)
+; Simple: 1-step diagonal or capture
+;--------------------------------------
+try_move:
+        mov eax, [sel_row]
+        mov ebx, [sel_col]
+        mov ecx, [cur_row]
+        mov edx, [cur_col]
+
+        ; Dest must be empty
+        mov esi, ecx
+        imul esi, BSIZE
+        add esi, edx
+        movzx esi, byte [board + esi]
+        test esi, esi
+        jnz .tm_cancel
+
+        ; Source must be red piece
+        mov esi, eax
+        imul esi, BSIZE
+        add esi, ebx
+        movzx esi, byte [board + esi]
+        cmp esi, RED
+        je .tm_piece
+        cmp esi, RED_K
+        jne .tm_cancel
+        mov dword [.is_king], 1
+        jmp .tm_calc
+.tm_piece:
+        mov dword [.is_king], 0
+
+.tm_calc:
+        ; dr = cur_row - sel_row, dc = cur_col - sel_col
+        mov edi, ecx
+        sub edi, eax        ; dr
+        push ecx
+        push edx
+        mov ecx, edx
+        sub ecx, ebx        ; dc
+        mov [.dr], edi
+        mov [.dc], ecx
+        pop edx
+        pop ecx
+
+        ; Regular red moves UP (dr = -1) or king ±1
+        cmp dword [.is_king], 0
+        je .tm_check_dir
+
+        ; King: allow dr = ±1
+        mov esi, [.dr]
+        cmp esi, 1
+        je .tm_check_dc
+        cmp esi, -1
+        jne .tm_cancel
+        jmp .tm_check_dc
+
+.tm_check_dir:
+        cmp dword [.dr], -1
+        jne .tm_try_cap
+
+.tm_check_dc:
+        mov esi, [.dc]
+        cmp esi, 1
+        je .tm_ok
+        cmp esi, -1
+        jne .tm_try_cap
+        jmp .tm_ok
+
+.tm_try_cap:
+        ; Try capture: dr=±2, dc=±2
+        mov esi, [.dr]
+        cmp esi, -2
+        je .tm_cap_dr
+        cmp dword [.is_king], 1
+        jne .tm_cancel
+        cmp esi, 2
+        jne .tm_cancel
+
+.tm_cap_dr:
+        mov esi, [.dc]
+        cmp esi, 2
+        je .tm_cap_dc
+        cmp esi, -2
+        jne .tm_cancel
+
+.tm_cap_dc:
+        ; Check mid cell has opponent (black)
+        mov esi, eax          ; sel_row
+        add esi, [.dr]
+        sar esi, 1            ; (sel_row + dr/2)
+        ; Hmm, (sel_row + cur_row)/2
+        mov esi, eax
+        add esi, ecx
+        sar esi, 1
+        mov edi, ebx
+        add edi, edx
+        sar edi, 1
+        push esi
+        push edi
+        imul esi, BSIZE
+        add esi, edi
+        movzx esi, byte [board + esi]
+        pop edi
+        pop esi
+        cmp esi, BLACK
+        je .tm_cap_ok
+        cmp esi, BLACK_K
+        jne .tm_cancel
+
+.tm_cap_ok:
+        ; Remove captured piece
+        mov esi, eax
+        add esi, ecx
+        sar esi, 1
+        mov edi, ebx
+        add edi, edx
+        sar edi, 1
+        imul esi, BSIZE
+        add esi, edi
+        mov byte [board + esi], EMPTY
+
+.tm_ok:
+        ; Move piece from sel to cur
+        ; EAX=sel_row, EBX=sel_col, ECX=cur_row, EDX=cur_col
+        mov esi, eax
+        imul esi, BSIZE
+        add esi, ebx
+        movzx edi, byte [board + esi]   ; EDI = piece
+        mov [.piece_tmp], edi
+        mov byte [board + esi], EMPTY
+
+        mov esi, ecx
+        imul esi, BSIZE
+        add esi, edx
+        mov ebx, [.piece_tmp]
+        mov [board + esi], bl          ; write piece byte
+
+        ; King promotion: row=0 for red
+        cmp ecx, 0
+        jne .tm_no_promote
+        cmp byte [board + esi], RED
+        jne .tm_no_promote
+        mov byte [board + esi], RED_K
+.tm_no_promote:
+
+        mov dword [state], STATE_SELECT
+        ; AI turn
+        call ai_move
+        call check_game_over
+        ret
+
+.tm_cancel:
+        mov dword [state], STATE_SELECT
+        ret
+
+.is_king:   dd 0
+.dr:        dd 0
+.dc:        dd 0
+.piece_tmp: dd 0
+
+;--------------------------------------
+; Greedy AI: find capture or any valid black move
+;--------------------------------------
+ai_move:
+        ; Try captures first
+        xor ecx, ecx
+.ai_cap:
+        cmp ecx, BSIZE*BSIZE
+        jge .ai_step
+        mov eax, ecx
+        xor edx, edx
+        mov ebx, BSIZE
+        div ebx
+        movzx esi, byte [board + ecx]
+        cmp esi, BLACK
+        je .ai_cap_try
+        cmp esi, BLACK_K
+        jne .ai_cap_next
+.ai_cap_try:
+        push ecx
         push eax
         push edx
-        ; Try (row+2, col+2) if black piece, (row+1,col+1)=opp
-        ; ...simplified: just try basic move
+        ; Try 4 diagonal captures
+        mov [.srow], eax
+        mov [.scol], edx
+        cmp esi, BLACK_K
+        je .ai_try_cap_all
+        ; Regular: only dr=+2
+        call .try_cap_fwd
         pop edx
         pop eax
-        jmp .ai_next
-.ai_next:
-        inc ebp
-        jmp .ai_scan
+        pop ecx
+        jmp .ai_cap_next
 
-.ai_simple:
-        ; Find first black piece and move it forward (down = row+1)
-        mov ebp, 0
-.as2:
-        cmp ebp, 64
-        jge .ai_no_move
-        movzx eax, byte [board + ebp]
-        cmp eax, BLK
-        je .as_move
-        cmp eax, BLK_K
-        je .as_move
-        inc ebp
-        jmp .as2
-.as_move:
-        ; Piece at ebp, row = ebp/8, col = ebp%8
-        mov eax, ebp
-        xor edx, edx
-        mov ecx, 8
-        div ecx
-        ; EAX=row, EDX=col
-        ; Try move to (row+1, col+1)
-        cmp eax, 7
-        je .try_other
-        mov ecx, eax
+.ai_try_cap_all:
+        call .try_cap_fwd
+        pop edx
+        pop eax
+        pop ecx
+        jmp .ai_cap_next
+
+.ai_cap_next:
         inc ecx
-        mov edi, edx
+        jmp .ai_cap
+
+.ai_step:
+        ; No capture: simple move
+        xor ecx, ecx
+.ai_mv:
+        cmp ecx, BSIZE*BSIZE
+        jge .ai_done
+        mov eax, ecx
+        xor edx, edx
+        mov ebx, BSIZE
+        div ebx
+        movzx esi, byte [board + ecx]
+        cmp esi, BLACK
+        je .ai_mv_try
+        cmp esi, BLACK_K
+        jne .ai_mv_next
+.ai_mv_try:
+        push ecx
+        push eax
+        push edx
+        mov [.srow], eax
+        mov [.scol], edx
+        ; Try dr=+1, dc=±1
+        mov edi, eax
+        add edi, 1
+        call .try_step
+        pop edx
+        pop eax
+        pop ecx
+.ai_mv_next:
+        inc ecx
+        jmp .ai_mv
+
+.ai_done:
+        ret
+
+.try_step:
+        ; EDI=dst_row; try dc=-1 and dc=+1
+        mov esi, [.scol]
+        dec esi
+        call .step_one
+        mov esi, [.scol]
+        inc esi
+        call .step_one
+        ret
+
+.step_one:
+        ; EDI=dst_row, ESI=dst_col
+        cmp edi, 0
+        jl .so_ret
+        cmp edi, BSIZE
+        jge .so_ret
+        cmp esi, 0
+        jl .so_ret
+        cmp esi, BSIZE
+        jge .so_ret
+        push edi
+        push esi
+        imul edi, BSIZE
+        add edi, esi
+        movzx edi, byte [board + edi]
+        test edi, edi
+        pop esi
+        pop edi
+        jnz .so_ret
+        ; Move!
+        mov eax, [.srow]
+        mov ebx, [.scol]
+        imul eax, BSIZE
+        add eax, ebx
+        movzx ecx, byte [board + eax]
+        mov byte [board + eax], EMPTY
+        push ecx
+        push edi
+        push esi
+        imul edi, BSIZE
+        add edi, esi
+        pop esi
+        pop edi
+        pop ecx
+        push edi
+        push esi
+        push ecx
+        imul edi, BSIZE
+        add edi, esi
+        pop ecx
+        mov [board + edi], cl
+        pop esi
+        pop edi
+        ; King promotion: row=7 for black
+        cmp edi, BSIZE-1
+        jne .so_np
+        push esi
+        push edi
+        imul edi, BSIZE
+        add edi, esi
+        movzx ecx, byte [board + edi]
+        cmp ecx, BLACK
+        jne .so_np2
+        mov byte [board + edi], BLACK_K
+.so_np2:
+        pop edi
+        pop esi
+.so_np:
+        ret
+.so_ret:
+        ret
+
+.try_cap_fwd:
+        ; Try dr=+2, dc=±2 captures for black
+        mov eax, [.srow]
+        add eax, 2
+        cmp eax, BSIZE
+        jge .tcf_ret
+        mov ebx, [.scol]
+        dec ebx
+        dec ebx
+        call .cap_one
+        mov ebx, [.scol]
+        add ebx, 2
+        call .cap_one
+.tcf_ret:
+        ret
+
+.cap_one:
+        ; EAX=dst_row, EBX=dst_col
+        cmp ebx, 0
+        jl .co_ret
+        cmp ebx, BSIZE
+        jge .co_ret
+        ; Check dst empty
+        push eax
+        push ebx
+        imul eax, BSIZE
+        add eax, ebx
+        movzx ecx, byte [board + eax]
+        pop ebx
+        pop eax
+        test ecx, ecx
+        jnz .co_ret
+        ; Check mid has red
+        mov ecx, [.srow]
+        add ecx, eax
+        sar ecx, 1
+        mov edx, [.scol]
+        add edx, ebx
+        sar edx, 1
+        push ecx
+        push edx
+        imul ecx, BSIZE
+        add ecx, edx
+        movzx ecx, byte [board + ecx]
+        pop edx
+        pop ecx
+        cmp ecx, RED
+        je .co_ok
+        cmp ecx, RED_K
+        jne .co_ret
+.co_ok:
+        ; Capture: remove mid, move piece
+        push ecx
+        push edx
+        imul ecx, BSIZE
+        add ecx, edx
+        mov byte [board + ecx], EMPTY
+        pop edx
+        pop ecx
+        ; Move
+        mov ecx, [.srow]
+        mov edx, [.scol]
+        push ecx
+        push edx
+        imul ecx, BSIZE
+        add ecx, edx
+        movzx ecx, byte [board + ecx]
+        mov [.piece], ecx
+        pop edx
+        pop ecx
+        imul ecx, BSIZE
+        add ecx, edx
+        mov byte [board + ecx], EMPTY
+        push eax
+        push ebx
+        imul eax, BSIZE
+        add eax, ebx
+        mov ecx, [.piece]
+        mov [board + eax], cl
+        pop ebx
+        pop eax
+.co_ret:
+        ret
+
+.srow:   dd 0
+.scol:   dd 0
+.piece:  dd 0
+
+;--------------------------------------
+check_game_over:
+        ; If no red or no black pieces remain → game over
+        xor ecx, ecx
+        xor edi, edi    ; red count
+        xor esi, esi    ; black count
+.cgo_loop:
+        cmp ecx, BSIZE*BSIZE
+        jge .cgo_check
+        movzx eax, byte [board + ecx]
+        cmp eax, RED
+        je .cgo_r
+        cmp eax, RED_K
+        je .cgo_r
+        cmp eax, BLACK
+        je .cgo_b
+        cmp eax, BLACK_K
+        je .cgo_b
+        inc ecx
+        jmp .cgo_loop
+.cgo_r:
         inc edi
-        cmp edi, 8
-        jge .try_other
-        mov esi, ecx
-        imul esi, 8
-        add esi, edi
-        cmp byte [board + esi], EMPTY
-        jne .try_other
-        ; Execute move
-        movzx ebx, byte [board + ebp]
-        mov byte [board + ebp], EMPTY
-        mov [board + esi], bl
-        ; King promotion: black reaches row 7
-        cmp ecx, 7
-        jne .ai_pm_done
-        cmp byte [board + esi], BLK
-        jne .ai_pm_done
-        mov byte [board + esi], BLK_K
-.ai_pm_done:
-        mov eax, SYS_PRINT
-        mov ebx, msg_ai_moved
-        int 0x80
-        ret
-.try_other:
-        ; Try (row+1, col-1)
-        mov eax, ebp
-        xor edx, edx
-        mov ecx, 8
-        div ecx
-        cmp eax, 7
-        je .ai_no_move
-        mov ecx, eax
         inc ecx
-        mov edi, edx
-        dec edi
-        js .ai_no_move
-        mov esi, ecx
-        imul esi, 8
-        add esi, edi
-        cmp byte [board + esi], EMPTY
-        jne .ai_no_move
-        movzx ebx, byte [board + ebp]
-        mov byte [board + ebp], EMPTY
-        mov [board + esi], bl
-        cmp ecx, 7
-        jne .ai_pm2
-        cmp byte [board + esi], BLK
-        jne .ai_pm2
-        mov byte [board + esi], BLK_K
-.ai_pm2:
-        mov eax, SYS_PRINT
-        mov ebx, msg_ai_moved
-        int 0x80
+        jmp .cgo_loop
+.cgo_b:
+        inc esi
+        inc ecx
+        jmp .cgo_loop
+.cgo_check:
+        test edi, edi
+        jz .cgo_over
+        test esi, esi
+        jz .cgo_over
         ret
-.ai_no_move:
-        mov eax, SYS_PRINT
-        mov ebx, msg_ai_stuck
-        int 0x80
-        ret
-
-count_red:
-        xor eax, eax
-        xor ecx, ecx
-.cr:    cmp ecx, 64
-        jge .cr_done
-        movzx edx, byte [board + ecx]
-        cmp edx, RED
-        je .cr_inc
-        cmp edx, RED_K
-        jne .cr_next
-.cr_inc:
+.cgo_over:
+        mov dword [game_over], 1
+        mov [.red_cnt], edi
+        mov [.blk_cnt], esi
+        ; Fire SFX + persist on first detection
+        cmp byte [result_played], 0
+        jne .cgo_done
+        mov byte [result_played], 1
+        ; Player (RED) wins iff black count = 0 (esi==0)
+        test esi, esi
+        jnz .cgo_lose
+        ; Win: bump persistent wins, save, win SFX
+        pushad
+        mov eax, [total_wins]
         inc eax
-.cr_next:
-        inc ecx
-        jmp .cr
-.cr_done:
+        mov [total_wins], eax
+        mov ebx, [total_wins]
+        mov esi, hs_name_ck
+        call hs_save
+        call audio_sfx_win
+        popad
         ret
+.cgo_lose:
+        call audio_sfx_lose
+.cgo_done:
+        ret
+.red_cnt: dd 0
+.blk_cnt: dd 0
 
-count_black:
-        xor eax, eax
+;--------------------------------------
+draw_all:
+        pushad
+        mov edx, COL_BG
+        call vbe_clear_screen
+
+        mov dword [.ri], 0
+.da_row:
+        cmp dword [.ri], BSIZE
+        jge .da_done
+        mov dword [.ci], 0
+.da_col:
+        cmp dword [.ci], BSIZE
+        jge .da_col_done
+
+        mov eax, [.ci]
+        imul eax, CELL_SZ + CELL_GAP
+        add eax, GRID_X
+        mov [.cx], eax
+        mov eax, [.ri]
+        imul eax, CELL_SZ + CELL_GAP
+        add eax, GRID_Y
+        mov [.cy], eax
+
+        ; Square colour (dark on odd sum)
+        mov eax, [.ri]
+        add eax, [.ci]
+        test eax, 1
+        jnz .da_dark
+        mov edi, COL_LIGHT
+        jmp .da_sq
+.da_dark:
+        mov edi, COL_DARK
+.da_sq:
+        mov ebx, [.cx]
+        mov ecx, [.cy]
+        mov edx, CELL_SZ
+        mov esi, CELL_SZ
+        call vbe_fill_rect
+
+        ; Highlight selected piece
+        cmp dword [state], STATE_MOVE
+        jne .da_piece
+        mov eax, [.ri]
+        cmp eax, [sel_row]
+        jne .da_piece
+        mov eax, [.ci]
+        cmp eax, [sel_col]
+        jne .da_piece
+        mov ebx, [.cx]
+        mov ecx, [.cy]
+        mov edx, CELL_SZ
+        mov esi, COL_SEL
+        call vbe_draw_hline
+        mov ecx, [.cy]
+        call vbe_draw_vline
+        mov ecx, [.cy]
+        add ecx, CELL_SZ - 1
+        call vbe_draw_hline
+        mov ebx, [.cx]
+        add ebx, CELL_SZ - 1
+        mov ecx, [.cy]
+        call vbe_draw_vline
+
+.da_piece:
+        ; Get piece
+        mov eax, [.ri]
+        imul eax, BSIZE
+        add eax, [.ci]
+        movzx eax, byte [board + eax]
+        test eax, eax
+        jz .da_cursor
+
+        ; Disc
+        mov ebx, [.cx]
+        add ebx, CELL_SZ/2
+        mov ecx, [.cy]
+        add ecx, CELL_SZ/2
+        mov edx, DISC_R
+
+        cmp eax, RED
+        je .da_red
+        cmp eax, RED_K
+        je .da_redk
+        cmp eax, BLACK
+        je .da_blk
+        ; BLACK_K
+        mov esi, COL_BLK_P
+        call vbe_fill_circle
+        ; Crown ring
+        mov edx, DISC_R - 10
+        mov esi, COL_BLK_K2
+        call vbe_fill_circle
+        jmp .da_cursor
+.da_red:
+        mov esi, COL_RED_P
+        call vbe_fill_circle
+        jmp .da_cursor
+.da_redk:
+        mov esi, COL_RED_P
+        call vbe_fill_circle
+        mov edx, DISC_R - 10
+        mov esi, COL_RED_K2
+        call vbe_fill_circle
+        jmp .da_cursor
+.da_blk:
+        mov esi, COL_BLK_P
+        call vbe_fill_circle
+
+.da_cursor:
+        ; Cursor highlight
+        mov eax, [.ri]
+        cmp eax, [cur_row]
+        jne .da_no_cur
+        mov eax, [.ci]
+        cmp eax, [cur_col]
+        jne .da_no_cur
+        mov ebx, [.cx]
+        mov ecx, [.cy]
+        mov edx, CELL_SZ
+        mov esi, COL_CURSOR
+        call vbe_draw_hline
+        mov ecx, [.cy]
+        call vbe_draw_vline
+        mov ecx, [.cy]
+        add ecx, CELL_SZ - 1
+        call vbe_draw_hline
+        mov ebx, [.cx]
+        add ebx, CELL_SZ - 1
+        mov ecx, [.cy]
+        call vbe_draw_vline
+.da_no_cur:
+
+        inc dword [.ci]
+        jmp .da_col
+.da_col_done:
+        inc dword [.ri]
+        jmp .da_row
+
+.da_done:
+        ; Status panel
+        mov ebx, GRID_X + BSIZE*(CELL_SZ+CELL_GAP) + 30
+        mov ecx, GRID_Y + 20
+
+        cmp dword [game_over], 1
+        jne .da_hint
+
+        ; Count remaining
+        xor edi, edi
+        xor esi, esi
         xor ecx, ecx
-.cb:    cmp ecx, 64
-        jge .cb_done
-        movzx edx, byte [board + ecx]
-        cmp edx, BLK
-        je .cb_inc
-        cmp edx, BLK_K
-        jne .cb_next
-.cb_inc:
-        inc eax
-.cb_next:
+.da_cnt:
+        cmp ecx, BSIZE*BSIZE
+        jge .da_cnt_done
+        movzx eax, byte [board + ecx]
+        cmp eax, RED
+        je .da_cr
+        cmp eax, RED_K
+        je .da_cr
+        cmp eax, BLACK
+        je .da_cb
+        cmp eax, BLACK_K
+        je .da_cb
         inc ecx
-        jmp .cb
-.cb_done:
+        jmp .da_cnt
+.da_cr: inc edi
+        inc ecx
+        jmp .da_cnt
+.da_cb: inc esi
+        inc ecx
+        jmp .da_cnt
+.da_cnt_done:
+
+        mov ebx, GRID_X + BSIZE*(CELL_SZ+CELL_GAP) + 30
+        mov ecx, GRID_Y + 20
+        cmp edi, 0
+        je .da_ai_win
+        mov edx, msg_pwin
+        mov esi, COL_GREEN
+        mov eax, 2
+        call vbe_draw_str
+        jmp .da_restart
+.da_ai_win:
+        mov edx, msg_awin
+        mov esi, COL_RED_P
+        mov eax, 2
+        call vbe_draw_str
+.da_restart:
+        add ecx, 35
+        mov edx, msg_restart
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+        jmp .da_end
+
+.da_hint:
+        cmp dword [state], STATE_SELECT
+        je .da_hint_sel
+        mov edx, msg_move_hint
+        jmp .da_sh
+.da_hint_sel:
+        mov edx, msg_sel_hint
+.da_sh:
+        mov ebx, GRID_X + BSIZE*(CELL_SZ+CELL_GAP) + 30
+        mov ecx, GRID_Y + 20
+        mov esi, COL_GRAY
+        mov eax, 1
+        call vbe_draw_str
+
+.da_end:
+        VBE_GAME_PRESENT
+        popad
         ret
 
-msg_board_hdr:  db "=== CHECKERS ===", 10
-                db "  a b c d e f g h", 10, 0
-msg_col_hdr:    db "  a b c d e f g h", 10, 0
-msg_your_move:  db "Your move (red=r/R, moves UP).", 10, 0
-msg_from:       db "From (RC, e.g. 64): ", 0
-msg_to:         db "To   (RC, e.g. 53): ", 0
-msg_ai_moved:   db "AI moved.", 10, 0
-msg_ai_stuck:   db "AI has no moves.", 10, 0
-msg_red_wins:   db "RED wins!", 10, 0
-msg_blk_wins:   db "BLACK wins!", 10, 0
+.ri: dd 0
+.ci: dd 0
+.cx: dd 0
+.cy: dd 0
 
-board:          times 64 db 0
-from_row:       dd 0
-from_col:       dd 0
-to_row:         dd 0
-to_col:         dd 0
-dr:             dd 0
-dc:             dd 0
-input_buf:      times 16 db 0
+;=== Data ===
+msg_sel_hint:  db "ARROWS=MOVE  ENTER=SELECT  Q=QUIT", 0
+msg_move_hint: db "ARROWS=DEST  ENTER=MOVE  BKSP=CANCEL", 0
+msg_pwin:      db "YOU WIN!", 0
+msg_awin:      db "AI WINS!", 0
+msg_restart:   db "ANY KEY = NEW GAME", 0
+
+board:      times BSIZE*BSIZE db 0
+cur_row:    dd 0
+cur_col:    dd 0
+sel_row:    dd -1
+sel_col:    dd -1
+state:      dd 0
+game_over:  dd 0
+hs_name_ck:    db "checkers", 0
+hs_loaded:     db 0
+result_played: db 0
+total_wins:    dd 0

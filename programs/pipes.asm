@@ -1,32 +1,29 @@
-; pipes.asm - Pipe Dream puzzle game for Mellivora OS (Burrows GUI)
-; Place pipe pieces to connect the source to the drain before
-; the water flows. Click grid cells to place the next piece.
+; pipes.asm - Pipe Dream puzzle game for Mellivora OS
+; VBE 1024x768. Arrows=cursor, Enter=place piece, Space=flow, R=restart, ESC=quit.
 
 %include "syscalls.inc"
-%include "lib/gui.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
 
-; Window dimensions
-WIN_W           equ 320
-WIN_H           equ 300
-
-; Grid
-GRID_X          equ 10
-GRID_Y          equ 40
+GRID_X          equ 192
+GRID_Y          equ 168
 GRID_COLS       equ 10
 GRID_ROWS       equ 8
-CELL_SIZE       equ 28
+CELL_SIZE       equ 64
 GRID_W          equ (GRID_COLS * CELL_SIZE)
 GRID_H          equ (GRID_ROWS * CELL_SIZE)
 
 ; Pipe types (packed bits: NESW = bit3..bit0)
 PIPE_NONE       equ 0
-PIPE_H          equ 0x05        ; E+W (horizontal) ═
-PIPE_V          equ 0x0A        ; N+S (vertical)   ║
-PIPE_NE         equ 0x09        ; N+E (elbow)      ╚
-PIPE_NW         equ 0x0C        ; N+W              ╝
-PIPE_SE         equ 0x03        ; S+E              ╔
-PIPE_SW         equ 0x06        ; S+W              ╗
-PIPE_CROSS      equ 0x0F        ; all 4            ╬
+PIPE_H          equ 0x05        ; E+W (horizontal)
+PIPE_V          equ 0x0A        ; N+S (vertical)
+PIPE_NE         equ 0x09        ; N+E (elbow)
+PIPE_NW         equ 0x0C        ; N+W
+PIPE_SE         equ 0x03        ; S+E
+PIPE_SW         equ 0x06        ; S+W
+PIPE_CROSS      equ 0x0F        ; all 4
 NUM_PIECES      equ 7
 
 ; Direction bits
@@ -57,126 +54,113 @@ COL_PIPE_FILL   equ 0x003399FF
 COL_SOURCE      equ 0x0044DD44
 COL_DRAIN       equ 0x00DD4444
 COL_HUD         equ 0x00FFFFFF
+COL_HUD_BG      equ 0x00222233
 COL_PREVIEW     equ 0x00AAAACC
 COL_WIN_TEXT    equ 0x0044FF44
 COL_LOSE_TEXT   equ 0x00FF4444
+COL_CURSOR      equ 0x00FFFF44
 
 start:
-        ; Create window
-        mov eax, 100
-        mov ebx, 40
-        mov ecx, WIN_W
-        mov edx, WIN_H
-        mov esi, win_title
-        call gui_create_window
-        mov [win_id], eax
-
+        VBE_GAME_INIT
         call init_game
 
 .main_loop:
-        call draw_all
-
-        ; In flowing state, advance water
         cmp dword [game_state], STATE_FLOWING
         jne .not_flowing
         call advance_flow
 .not_flowing:
-
-        ; Poll events
-        mov eax, [win_id]
-        call gui_poll_event
-
-        cmp eax, EVT_CLOSE
-        je .quit
-        cmp eax, EVT_KEY_PRESS
-        je .handle_key
-        cmp eax, EVT_MOUSE_CLICK
-        je .handle_click
-        jmp .main_loop
-
-.handle_key:
-        cmp ebx, 27             ; ESC
-        je .quit
-        cmp ebx, ' '
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .no_key
+        cmp al, KEY_ESC
+        je .exit_game
+        cmp al, 'q'
+        je .exit_game
+        cmp al, 'Q'
+        je .exit_game
+        cmp al, 'R'
+        je .restart
+        cmp al, KEY_UP
+        je .cur_up
+        cmp al, KEY_DOWN
+        je .cur_down
+        cmp al, KEY_LEFT
+        je .cur_left
+        cmp al, KEY_RIGHT
+        je .cur_right
+        cmp al, KEY_ENTER
+        je .place_pipe
+        cmp al, KEY_SPACE
         je .start_flow
-        cmp ebx, 'r'
-        je .restart
-        cmp ebx, 'R'
-        je .restart
-        jmp .main_loop
+        jmp .no_key
+
+.cur_up:
+        cmp dword [cursor_row], 0
+        je .no_key
+        dec dword [cursor_row]
+        jmp .no_key
+.cur_down:
+        mov eax, [cursor_row]
+        cmp eax, GRID_ROWS - 1
+        je .no_key
+        inc dword [cursor_row]
+        jmp .no_key
+.cur_left:
+        cmp dword [cursor_col], 0
+        je .no_key
+        dec dword [cursor_col]
+        jmp .no_key
+.cur_right:
+        mov eax, [cursor_col]
+        cmp eax, GRID_COLS - 1
+        je .no_key
+        inc dword [cursor_col]
+        jmp .no_key
+
+.place_pipe:
+        cmp dword [game_state], STATE_PLAY
+        jne .no_key
+        mov eax, [cursor_row]
+        imul eax, GRID_COLS
+        add eax, [cursor_col]
+        cmp byte [grid_state + eax], CELL_EMPTY
+        jne .no_key
+        movzx edx, byte [next_piece]
+        mov [grid_pipes + eax], dl
+        mov byte [grid_state + eax], CELL_PLACED
+        call gen_next_piece
+        inc dword [pieces_placed]
+        jmp .no_key
 
 .start_flow:
         cmp dword [game_state], STATE_PLAY
-        jne .main_loop
+        jne .no_key
         mov dword [game_state], STATE_FLOWING
         mov dword [flow_timer], 0
-        ; Set flow start at source
         movzx eax, byte [source_row]
         imul eax, GRID_COLS
         movzx ebx, byte [source_col]
         add eax, ebx
         mov [flow_pos], eax
-        mov byte [flow_dir], DIR_E  ; start flowing east from source
-        jmp .main_loop
+        mov byte [flow_dir], DIR_E
+        jmp .no_key
 
 .restart:
         call init_game
         jmp .main_loop
 
-.handle_click:
-        ; EBX = x, ECX = y
-        cmp dword [game_state], STATE_PLAY
-        jne .main_loop
-
-        ; Check if click is in grid
-        sub ebx, GRID_X
-        js .main_loop
-        sub ecx, GRID_Y
-        js .main_loop
-        ; Col = ebx / CELL_SIZE, Row = ecx / CELL_SIZE
-        push edx
-        mov eax, ebx
-        xor edx, edx
-        push ecx
-        mov ecx, CELL_SIZE
-        div ecx
-        mov ebx, eax             ; col
-        pop eax
-        xor edx, edx
-        push ecx
-        mov ecx, CELL_SIZE
-        div ecx
-        mov ecx, eax             ; row
-        pop edx
-        pop edx
-
-        ; Bounds check
-        cmp ebx, GRID_COLS
-        jge .main_loop
-        cmp ecx, GRID_ROWS
-        jge .main_loop
-
-        ; Check if cell is occupied (source, drain, or already placed)
-        mov eax, ecx
-        imul eax, GRID_COLS
-        add eax, ebx
-        cmp byte [grid_state + eax], CELL_EMPTY
-        jne .main_loop
-
-        ; Place current piece
-        movzx edx, byte [next_piece]
-        mov [grid_pipes + eax], dl
-        mov byte [grid_state + eax], CELL_PLACED
-
-        ; Generate next piece
-        call gen_next_piece
-        inc dword [pieces_placed]
+.no_key:
+        call draw_all
+        mov eax, SYS_SLEEP
+        mov ebx, 2
+        int 0x80
         jmp .main_loop
 
-.quit:
-        mov eax, [win_id]
-        call gui_destroy_window
-        mov eax, SYS_EXIT
+.exit_game:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
         int 0x80
 
 
@@ -196,6 +180,14 @@ init_game:
         mov dword [pieces_placed], 0
         mov dword [score], 0
         mov dword [flow_timer], 0
+        ; First-call: load persistent high score from /scores/pipes
+        cmp byte [hs_loaded], 0
+        jne .ig_loaded
+        mov byte [hs_loaded], 1
+        mov esi, hs_name_pp
+        call hs_load
+        mov [hi_score], eax
+.ig_loaded:
 
         ; Place source at left side, random row
         mov eax, SYS_GETTIME
@@ -356,10 +348,17 @@ advance_flow:
         mov byte [grid_state + eax], CELL_FILLED
         add dword [score], 100
         mov dword [game_state], STATE_WIN
+        ; Persist high score (only if better) + win SFX
+        mov esi, hs_name_pp
+        mov ebx, [score]
+        call hs_update
+        mov [hi_score], eax
+        call audio_sfx_win
         jmp .af_done
 
 .af_lose:
         mov dword [game_state], STATE_LOSE
+        call audio_sfx_lose
 
 .af_done:
         popad
@@ -393,487 +392,326 @@ draw_all:
         pushad
 
         ; Background
-        mov eax, [win_id]
-        xor ebx, ebx
-        xor ecx, ecx
-        mov edx, WIN_W
-        mov esi, WIN_H
-        mov edi, COL_BG
-        call gui_fill_rect
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; HUD: score and next piece
-        mov eax, [win_id]
-        mov ebx, 10
-        mov ecx, 8
-        mov esi, str_score
-        mov edi, COL_HUD
-        call gui_draw_text
+        ; HUD background
+        mov ebx, 0
+        mov ecx, 0
+        mov edx, 1024
+        mov esi, 80
+        mov edi, COL_HUD_BG
+        call vbe_fill_rect
 
-        ; Score number
-        mov eax, [score]
-        call itoa
-        mov eax, [win_id]
-        mov ebx, 70
-        mov ecx, 8
-        mov esi, num_buf
-        mov edi, COL_HUD
-        call gui_draw_text
+        ; SCORE:
+        mov ebx, 30
+        mov ecx, 28
+        mov edx, str_score
+        mov esi, COL_HUD
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 150
+        mov ecx, 28
+        mov edx, [score]
+        mov esi, COL_HUD
+        mov eax, 2
+        call vbe_draw_num
 
-        ; Next piece label
-        mov eax, [win_id]
-        mov ebx, 140
-        mov ecx, 8
-        mov esi, str_next
-        mov edi, COL_HUD
-        call gui_draw_text
+        ; NEXT:
+        mov ebx, 300
+        mov ecx, 28
+        mov edx, str_next
+        mov esi, COL_HUD
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Draw next piece preview
+        ; Draw next piece preview (cell_size=64 in HUD)
         movzx eax, byte [next_piece]
-        mov ebx, 200
-        mov ecx, 2
-        mov edx, 24
-        call draw_pipe_at
+        mov ebx, 400
+        mov ecx, 8
+        mov edx, COL_PREVIEW
+        mov esi, 60
+        call draw_pipe_vbe
 
         ; Controls hint
-        mov eax, [win_id]
-        mov ebx, 10
-        mov ecx, WIN_H - 16
-        mov esi, str_controls
-        mov edi, 0x00888888
-        call gui_draw_text
+        mov ebx, 550
+        mov ecx, 28
+        mov edx, str_controls
+        mov esi, 0x00778888
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Draw grid background
-        mov eax, [win_id]
+        ; Grid background
         mov ebx, GRID_X
         mov ecx, GRID_Y
         mov edx, GRID_W
         mov esi, GRID_H
         mov edi, COL_GRID_BG
-        call gui_fill_rect
+        call vbe_fill_rect
 
-        ; Draw grid cells
-        xor esi, esi             ; row
-.draw_row:
-        cmp esi, GRID_ROWS
-        jge .draw_grid_done
-        xor edi, edi             ; col
-.draw_col:
-        cmp edi, GRID_COLS
-        jge .draw_row_next
+        ; Draw cells
+        mov dword [.dr], 0
+.da_row:
+        cmp dword [.dr], GRID_ROWS
+        jge .da_done
+        mov dword [.dc], 0
+.da_col:
+        cmp dword [.dc], GRID_COLS
+        jge .da_row_next
 
         ; Cell index
-        mov eax, esi
+        mov eax, [.dr]
         imul eax, GRID_COLS
-        add eax, edi
+        add eax, [.dc]
+        mov [.da_idx], eax
 
-        ; Draw cell border
-        push eax
-        push esi
-        push edi
-        mov ebx, edi
+        ; Cell pixel position
+        mov ebx, [.dc]
         imul ebx, CELL_SIZE
         add ebx, GRID_X
-        mov ecx, esi
+        mov ecx, [.dr]
         imul ecx, CELL_SIZE
         add ecx, GRID_Y
-        push ebx
-        push ecx
-        ; Cell outline
-        mov eax, [win_id]
+        mov [.da_px], ebx
+        mov [.da_py], ecx
+
+        ; Cell border
         mov edx, CELL_SIZE
         mov esi, CELL_SIZE
         mov edi, COL_GRID_LINE
-        call gui_fill_rect
-        ; Inner cell (1px border)
-        pop ecx
-        pop ebx
+        call vbe_fill_rect
+
+        ; Inner cell
+        mov ebx, [.da_px]
         inc ebx
+        mov ecx, [.da_py]
         inc ecx
-        mov eax, [win_id]
         mov edx, CELL_SIZE - 2
         mov esi, CELL_SIZE - 2
         mov edi, COL_GRID_BG
-        call gui_fill_rect
-        pop edi
-        pop esi
-        pop eax
+        call vbe_fill_rect
 
-        ; Draw pipe in cell
+        ; Cursor highlight
+        mov eax, [.dr]
+        cmp eax, [cursor_row]
+        jne .da_no_cursor
+        mov eax, [.dc]
+        cmp eax, [cursor_col]
+        jne .da_no_cursor
+        mov ebx, [.da_px]
+        mov ecx, [.da_py]
+        mov edx, CELL_SIZE
+        mov esi, 3
+        mov edi, COL_CURSOR
+        call vbe_fill_rect
+        mov ebx, [.da_px]
+        mov ecx, [.da_py]
+        add ecx, CELL_SIZE - 3
+        mov edx, CELL_SIZE
+        mov esi, 3
+        mov edi, COL_CURSOR
+        call vbe_fill_rect
+        mov ebx, [.da_px]
+        mov ecx, [.da_py]
+        mov edx, 3
+        mov esi, CELL_SIZE
+        mov edi, COL_CURSOR
+        call vbe_fill_rect
+        mov ebx, [.da_px]
+        add ebx, CELL_SIZE - 3
+        mov ecx, [.da_py]
+        mov edx, 3
+        mov esi, CELL_SIZE
+        mov edi, COL_CURSOR
+        call vbe_fill_rect
+.da_no_cursor:
+
+        ; Draw cell content
+        mov eax, [.da_idx]
         cmp byte [grid_state + eax], CELL_EMPTY
-        je .draw_cell_done
-
-        push eax
+        je .da_next_cell
+        cmp byte [grid_state + eax], CELL_SOURCE
+        je .da_source
+        cmp byte [grid_state + eax], CELL_DRAIN
+        je .da_drain
+        cmp byte [grid_state + eax], CELL_FILLED
+        je .da_filled
+        ; Placed pipe
+        mov eax, [.da_idx]
         movzx eax, byte [grid_pipes + eax]
-        mov ebx, edi
-        imul ebx, CELL_SIZE
-        add ebx, GRID_X
-        mov ecx, esi
-        imul ecx, CELL_SIZE
-        add ecx, GRID_Y
-        mov edx, CELL_SIZE
-        ; Check if cell index is source or drain for special color
-        mov ebp, [esp]          ; get cell index
-        cmp byte [grid_state + ebp], CELL_SOURCE
-        je .draw_source_cell
-        cmp byte [grid_state + ebp], CELL_DRAIN
-        je .draw_drain_cell
-        cmp byte [grid_state + ebp], CELL_FILLED
-        je .draw_filled_cell
-        call draw_pipe_at
-        jmp .draw_cell_popped
-.draw_source_cell:
-        push esi
-        push edi
-        mov eax, [win_id]
-        add ebx, 2
-        add ecx, 2
-        mov edx, CELL_SIZE - 4
-        mov esi, CELL_SIZE - 4
+        mov ebx, [.da_px]
+        add ebx, 1
+        mov ecx, [.da_py]
+        add ecx, 1
+        mov edx, COL_PIPE
+        mov esi, CELL_SIZE - 2
+        call draw_pipe_vbe
+        jmp .da_next_cell
+.da_source:
+        mov ebx, [.da_px]
+        add ebx, 4
+        mov ecx, [.da_py]
+        add ecx, 4
+        mov edx, CELL_SIZE - 8
+        mov esi, CELL_SIZE - 8
         mov edi, COL_SOURCE
-        call gui_fill_rect
-        pop edi
-        pop esi
-        jmp .draw_cell_popped
-.draw_drain_cell:
-        push esi
-        push edi
-        mov eax, [win_id]
-        add ebx, 2
-        add ecx, 2
-        mov edx, CELL_SIZE - 4
-        mov esi, CELL_SIZE - 4
+        call vbe_fill_rect
+        jmp .da_next_cell
+.da_drain:
+        mov ebx, [.da_px]
+        add ebx, 4
+        mov ecx, [.da_py]
+        add ecx, 4
+        mov edx, CELL_SIZE - 8
+        mov esi, CELL_SIZE - 8
         mov edi, COL_DRAIN
-        call gui_fill_rect
-        pop edi
-        pop esi
-        jmp .draw_cell_popped
-.draw_filled_cell:
-        push eax
-        mov eax, [esp+4]        ; cell index
-        push ebx
-        push ecx
+        call vbe_fill_rect
+        jmp .da_next_cell
+.da_filled:
+        mov eax, [.da_idx]
         movzx eax, byte [grid_pipes + eax]
-        pop ecx
-        pop ebx
-        mov edx, CELL_SIZE
-        call draw_pipe_filled_at
-        pop eax
-        jmp .draw_cell_popped
-.draw_cell_popped:
-        pop eax
+        mov ebx, [.da_px]
+        add ebx, 1
+        mov ecx, [.da_py]
+        add ecx, 1
+        mov edx, COL_PIPE_FILL
+        mov esi, CELL_SIZE - 2
+        call draw_pipe_vbe
+.da_next_cell:
+        inc dword [.dc]
+        jmp .da_col
+.da_row_next:
+        inc dword [.dr]
+        jmp .da_row
 
-.draw_cell_done:
-        inc edi
-        jmp .draw_col
-
-.draw_row_next:
-        inc esi
-        jmp .draw_row
-
-.draw_grid_done:
-        ; Overlay messages
+.da_done:
+        ; State overlays
         cmp dword [game_state], STATE_WIN
-        je .draw_win
+        je .da_win
         cmp dword [game_state], STATE_LOSE
-        je .draw_lose
-        jmp .draw_flip
+        je .da_lose
+        jmp .da_present
 
-.draw_win:
-        mov eax, [win_id]
-        mov ebx, 80
-        mov ecx, GRID_Y + GRID_H / 2 - 8
-        mov esi, str_win
-        mov edi, COL_WIN_TEXT
-        call gui_draw_text
-        jmp .draw_flip
+.da_win:
+        mov ebx, 342
+        mov ecx, 340
+        mov edx, str_win
+        mov esi, COL_WIN_TEXT
+        mov eax, 3
+        call vbe_draw_str
+        jmp .da_present
 
-.draw_lose:
-        mov eax, [win_id]
-        mov ebx, 60
-        mov ecx, GRID_Y + GRID_H / 2 - 8
-        mov esi, str_lose
-        mov edi, COL_LOSE_TEXT
-        call gui_draw_text
+.da_lose:
+        mov ebx, 252
+        mov ecx, 340
+        mov edx, str_lose
+        mov esi, COL_LOSE_TEXT
+        mov eax, 3
+        call vbe_draw_str
 
-.draw_flip:
-        mov eax, [win_id]
-        call gui_compose
-        mov eax, [win_id]
-        call gui_flip
-
+.da_present:
+        VBE_GAME_PRESENT
         popad
         ret
 
+.dr:    dd 0
+.dc:    dd 0
+.da_idx: dd 0
+.da_px: dd 0
+.da_py: dd 0
 
-; ─── draw_pipe_at ────────────────────────────────────────────
-; Draw a pipe piece (unfilled)
-; EAX = pipe type (NESW bits), EBX = x, ECX = y, EDX = cell size
-draw_pipe_at:
+
+; draw_pipe_vbe: EAX=pipe_type, EBX=x, ECX=y, EDX=color, ESI=cell_size
+draw_pipe_vbe:
         pushad
         mov [.dp_type], al
         mov [.dp_x], ebx
         mov [.dp_y], ecx
-        mov [.dp_size], edx
+        mov [.dp_col], edx
+        mov eax, esi
+        shr eax, 1
+        mov [.dp_half], eax
+        shr eax, 1
+        mov [.dp_qrtr], eax
 
-        ; Center of cell
-        mov esi, edx
-        shr esi, 1
-        add esi, ebx             ; center_x
-        mov edi, edx
-        shr edi, 1
-        add edi, ecx             ; center_y
-
-        ; Pipe width = cell_size/4, half = cell_size/8
-        mov ebp, edx
-        shr ebp, 2               ; pipe_w
-
-        ; Draw segments as rectangles
-        ; North: vertical from top to center
-        test byte [.dp_type], DIR_N
+        movzx eax, byte [.dp_type]
+        test al, DIR_N
         jz .dp_no_n
-        mov eax, [win_id]
-        mov ebx, esi
-        sub ebx, ebp
-        shr ebp, 1
-        add ebx, ebp
-        shl ebp, 1
-        mov ecx, [.dp_y]
-        mov edx, ebp             ; width
-        push esi
-        mov esi, [.dp_size]
-        shr esi, 1               ; height = half cell
-        push edi
-        mov edi, COL_PIPE
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dp_size]
-        shr ebp, 2
-.dp_no_n:
-        ; South: vertical from center to bottom
-        test byte [.dp_type], DIR_S
-        jz .dp_no_s
-        mov eax, [win_id]
-        mov ebx, esi
-        sub ebx, ebp
-        shr ebp, 1
-        add ebx, ebp
-        shl ebp, 1
-        mov ecx, edi             ; center_y
-        mov edx, ebp             ; width
-        push esi
-        mov esi, [.dp_size]
-        shr esi, 1               ; height
-        push edi
-        mov edi, COL_PIPE
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dp_size]
-        shr ebp, 2
-.dp_no_s:
-        ; East: horizontal from center to right
-        test byte [.dp_type], DIR_E
-        jz .dp_no_e
-        mov eax, [win_id]
-        mov ebx, esi             ; center_x
-        mov ecx, edi
-        sub ecx, ebp
-        shr ebp, 1
-        add ecx, ebp
-        shl ebp, 1
-        push esi
-        mov edx, [.dp_size]
-        shr edx, 1               ; width = half cell
-        mov esi, ebp             ; height
-        push edi
-        mov edi, COL_PIPE
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dp_size]
-        shr ebp, 2
-.dp_no_e:
-        ; West: horizontal from left to center
-        test byte [.dp_type], DIR_W
-        jz .dp_no_w
-        mov eax, [win_id]
+        mov eax, [.dp_qrtr]
+        shr eax, 1
         mov ebx, [.dp_x]
-        mov ecx, edi
-        sub ecx, ebp
-        shr ebp, 1
-        add ecx, ebp
-        shl ebp, 1
-        push esi
-        mov edx, [.dp_size]
-        shr edx, 1
-        mov esi, ebp
-        push edi
-        mov edi, COL_PIPE
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dp_size]
-        shr ebp, 2
+        add ebx, [.dp_half]
+        sub ebx, eax
+        mov ecx, [.dp_y]
+        mov edx, [.dp_qrtr]
+        mov esi, [.dp_half]
+        mov edi, [.dp_col]
+        call vbe_fill_rect
+.dp_no_n:
+        movzx eax, byte [.dp_type]
+        test al, DIR_S
+        jz .dp_no_s
+        mov eax, [.dp_qrtr]
+        shr eax, 1
+        mov ebx, [.dp_x]
+        add ebx, [.dp_half]
+        sub ebx, eax
+        mov ecx, [.dp_y]
+        add ecx, [.dp_half]
+        mov edx, [.dp_qrtr]
+        mov esi, [.dp_half]
+        mov edi, [.dp_col]
+        call vbe_fill_rect
+.dp_no_s:
+        movzx eax, byte [.dp_type]
+        test al, DIR_E
+        jz .dp_no_e
+        mov eax, [.dp_qrtr]
+        shr eax, 1
+        mov ecx, [.dp_y]
+        add ecx, [.dp_half]
+        sub ecx, eax
+        mov ebx, [.dp_x]
+        add ebx, [.dp_half]
+        mov edx, [.dp_half]
+        mov esi, [.dp_qrtr]
+        mov edi, [.dp_col]
+        call vbe_fill_rect
+.dp_no_e:
+        movzx eax, byte [.dp_type]
+        test al, DIR_W
+        jz .dp_no_w
+        mov eax, [.dp_qrtr]
+        shr eax, 1
+        mov ecx, [.dp_y]
+        add ecx, [.dp_half]
+        sub ecx, eax
+        mov ebx, [.dp_x]
+        mov edx, [.dp_half]
+        mov esi, [.dp_qrtr]
+        mov edi, [.dp_col]
+        call vbe_fill_rect
 .dp_no_w:
         popad
         ret
 
-.dp_type:  db 0
-.dp_x:     dd 0
-.dp_y:     dd 0
-.dp_size:  dd 0
-
-
-; ─── draw_pipe_filled_at ─────────────────────────────────────
-; Same as draw_pipe_at but in blue (filled with water)
-draw_pipe_filled_at:
-        pushad
-        mov [.dpf_type], al
-        mov [.dpf_x], ebx
-        mov [.dpf_y], ecx
-        mov [.dpf_size], edx
-
-        mov esi, edx
-        shr esi, 1
-        add esi, ebx
-        mov edi, edx
-        shr edi, 1
-        add edi, ecx
-        mov ebp, edx
-        shr ebp, 2
-
-        test byte [.dpf_type], DIR_N
-        jz .dpf_no_n
-        mov eax, [win_id]
-        mov ebx, esi
-        sub ebx, ebp
-        shr ebp, 1
-        add ebx, ebp
-        shl ebp, 1
-        mov ecx, [.dpf_y]
-        mov edx, ebp
-        push esi
-        mov esi, [.dpf_size]
-        shr esi, 1
-        push edi
-        mov edi, COL_PIPE_FILL
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dpf_size]
-        shr ebp, 2
-.dpf_no_n:
-        test byte [.dpf_type], DIR_S
-        jz .dpf_no_s
-        mov eax, [win_id]
-        mov ebx, esi
-        sub ebx, ebp
-        shr ebp, 1
-        add ebx, ebp
-        shl ebp, 1
-        mov ecx, edi
-        mov edx, ebp
-        push esi
-        mov esi, [.dpf_size]
-        shr esi, 1
-        push edi
-        mov edi, COL_PIPE_FILL
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dpf_size]
-        shr ebp, 2
-.dpf_no_s:
-        test byte [.dpf_type], DIR_E
-        jz .dpf_no_e
-        mov eax, [win_id]
-        mov ebx, esi
-        mov ecx, edi
-        sub ecx, ebp
-        shr ebp, 1
-        add ecx, ebp
-        shl ebp, 1
-        push esi
-        mov edx, [.dpf_size]
-        shr edx, 1
-        mov esi, ebp
-        push edi
-        mov edi, COL_PIPE_FILL
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dpf_size]
-        shr ebp, 2
-.dpf_no_e:
-        test byte [.dpf_type], DIR_W
-        jz .dpf_no_w
-        mov eax, [win_id]
-        mov ebx, [.dpf_x]
-        mov ecx, edi
-        sub ecx, ebp
-        shr ebp, 1
-        add ecx, ebp
-        shl ebp, 1
-        push esi
-        mov edx, [.dpf_size]
-        shr edx, 1
-        mov esi, ebp
-        push edi
-        mov edi, COL_PIPE_FILL
-        call gui_fill_rect
-        pop edi
-        pop esi
-        mov ebp, [.dpf_size]
-        shr ebp, 2
-.dpf_no_w:
-        popad
-        ret
-
-.dpf_type:  db 0
-.dpf_x:     dd 0
-.dpf_y:     dd 0
-.dpf_size:  dd 0
-
-
-; ─── itoa ────────────────────────────────────────────────────
-; Convert EAX to decimal string in num_buf
-itoa:
-        pushad
-        mov edi, num_buf + 11
-        mov byte [edi], 0
-        mov ebx, 10
-.itoa_loop:
-        dec edi
-        xor edx, edx
-        div ebx
-        add dl, '0'
-        mov [edi], dl
-        test eax, eax
-        jnz .itoa_loop
-        ; Copy to beginning of num_buf
-        mov esi, edi
-        mov edi, num_buf
-.itoa_copy:
-        lodsb
-        stosb
-        test al, al
-        jnz .itoa_copy
-        popad
-        ret
+.dp_type: db 0
+.dp_x:    dd 0
+.dp_y:    dd 0
+.dp_col:  dd 0
+.dp_half: dd 0
+.dp_qrtr: dd 0
 
 
 ; ═════════════════════════════════════════════════════════════
 ; DATA
 ; ═════════════════════════════════════════════════════════════
 
-win_title:      db "Pipe Dream", 0
-str_score:      db "Score:", 0
-str_next:       db "Next:", 0
-str_controls:   db "Click=place  Space=flow  R=restart", 0
-str_win:        db "YOU WIN! Press R", 0
-str_lose:       db "WATER LEAKED! Press R", 0
-num_buf:        times 12 db 0
+str_score:      db "SCORE:", 0
+str_next:       db "NEXT:", 0
+str_controls:   db "ARROWS=MOVE  ENTER=PLACE  SPACE=FLOW  R=RESTART  ESC=QUIT", 0
+str_win:        db "YOU WIN  R=RESTART", 0
+str_lose:       db "LEAKED  R=RESTART", 0
 
 ; Available piece types
 piece_types:    db PIPE_H, PIPE_V, PIPE_NE, PIPE_NW, PIPE_SE, PIPE_SW, PIPE_CROSS
@@ -883,20 +721,23 @@ piece_types:    db PIPE_H, PIPE_V, PIPE_NE, PIPE_NW, PIPE_SE, PIPE_SW, PIPE_CROS
 ; BSS
 ; ═════════════════════════════════════════════════════════════
 
-section .bss
+game_state:     dd 0
+score:          dd 0
+hs_name_pp:     db "pipes", 0
+hs_loaded:      db 0
+hi_score:       dd 0
+pieces_placed:  dd 0
+flow_timer:     dd 0
+flow_pos:       dd 0
+flow_dir:       db 0
+next_piece:     db 0
+source_row:     db 0
+source_col:     db 0
+drain_row:      db 0
+drain_col:      db 0
+align 4
+cursor_row:     dd 0
+cursor_col:     dd 0
 
-win_id:         resd 1
-game_state:     resd 1
-score:          resd 1
-pieces_placed:  resd 1
-flow_timer:     resd 1
-flow_pos:       resd 1           ; current flow cell index
-flow_dir:       resb 1           ; current flow direction
-next_piece:     resb 1
-source_row:     resb 1
-source_col:     resb 1
-drain_row:      resb 1
-drain_col:      resb 1
-
-grid_pipes:     resb GRID_COLS * GRID_ROWS   ; pipe type per cell
-grid_state:     resb GRID_COLS * GRID_ROWS   ; cell state per cell
+grid_pipes:     times GRID_COLS * GRID_ROWS db 0
+grid_state:     times GRID_COLS * GRID_ROWS db 0

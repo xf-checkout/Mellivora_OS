@@ -108,6 +108,8 @@ start:
         je .exit
         cmp al, 'Q'
         je .exit
+        cmp al, 27
+        je .exit
         cmp al, 'r'
         je start
         cmp al, 'R'
@@ -172,6 +174,8 @@ check_input_pong:
         cmp al, 'q'
         je .cip_quit
         cmp al, 'Q'
+        je .cip_quit
+        cmp al, 27
         je .cip_quit
         jmp .cip_done
 .cip_up:

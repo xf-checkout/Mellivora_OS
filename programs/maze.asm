@@ -1,9 +1,11 @@
-; maze.asm - Random maze generator and solver for Mellivora OS
-; Uses recursive backtracking to generate, then BFS to solve
+; maze.asm - Random maze generator and solver
+; VBE 1024x768x32bpp. Any key=new maze, ESC=quit.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
 
-MAZE_W  equ 39         ; Must be odd
-MAZE_H  equ 21         ; Must be odd
+MAZE_W  equ 39
+MAZE_H  equ 21
 MAZE_SZ equ MAZE_W * MAZE_H
 
 WALL    equ '#'
@@ -13,123 +15,154 @@ SOLVE   equ '*'
 START   equ 'S'
 GOAL    equ 'E'
 
+CELL_SZ equ 20
+GRID_X  equ 122     ; (1024 - 39*20) / 2
+GRID_Y  equ 80
+
+COL_BG      equ 0x00080810
+COL_WALL    equ 0x003060A0
+COL_PATH    equ 0x000D0D18
+COL_SOLVE   equ 0x0033FF66
+COL_START   equ 0x00FF3333
+COL_GOAL    equ 0x00FFCC00
+COL_WHITE   equ 0x00FFFFFF
+COL_DIM     equ 0x00888888
+
 start:
-        mov eax, SYS_CLEAR
+        VBE_GAME_INIT
+        call new_maze
+        call draw_all
+
+.main_loop:
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .no_key
+        cmp al, KEY_ESC
+        je .quit
+        cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
+        je .quit
+        ; Any key = new maze
+        call new_maze
+        call draw_all
+.no_key:
+        mov eax, SYS_SLEEP
+        mov ebx, 1
+        int 0x80
+        jmp .main_loop
+
+.quit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
         int 0x80
 
-        mov eax, SYS_PRINT
-        mov ebx, msg_generating
+;--------------------------------------
+new_maze:
+        pushad
+        mov eax, SYS_GETTIME
         int 0x80
-
+        mov [prng_state], eax
         call generate_maze
         call solve_maze
-        call draw_maze
-
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_press_key
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-
-        ; Wait for key
-        mov eax, SYS_GETCHAR
-        int 0x80
-
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_EXIT
-        int 0x80
-
-;---------------------------------------
-; Draw the maze
-;---------------------------------------
-draw_maze:
-        pushad
-        mov eax, SYS_CLEAR
-        int 0x80
-        xor edx, edx
-.dm_row:
-        xor ecx, ecx
-.dm_col:
-        mov eax, edx
-        imul eax, MAZE_W
-        add eax, ecx
-        movzx ebx, byte [maze + eax]
-
-        cmp bl, WALL
-        je .dm_wall
-        cmp bl, SOLVE
-        je .dm_solve
-        cmp bl, START
-        je .dm_start
-        cmp bl, GOAL
-        je .dm_goal
-        ; Normal path
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        jmp .dm_next
-
-.dm_wall:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x70           ; White on black reversed
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, ' '
-        int 0x80
-        jmp .dm_next
-
-.dm_solve:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0A           ; Green
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 0xF9           ; middle dot
-        int 0x80
-        jmp .dm_next
-
-.dm_start:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0C           ; Red
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'S'
-        int 0x80
-        jmp .dm_next
-
-.dm_goal:
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0C
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 'E'
-        int 0x80
-
-.dm_next:
-        inc ecx
-        cmp ecx, MAZE_W
-        jl .dm_col
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PUTCHAR
-        mov ebx, 0x0A
-        int 0x80
-        inc edx
-        cmp edx, MAZE_H
-        jl .dm_row
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
         popad
         ret
+
+;--------------------------------------
+; VBE draw
+;--------------------------------------
+draw_all:
+        pushad
+        mov edx, COL_BG
+        call vbe_clear_screen
+
+        ; Title centered: "MAZE" 4 chars*15=60px, x=(1024-60)/2=482
+        mov ebx, 482
+        mov ecx, 20
+        mov edx, msg_title
+        mov esi, COL_WHITE
+        mov eax, 3
+        call vbe_draw_str
+
+        mov dword [.row], 0
+.da_row:
+        cmp dword [.row], MAZE_H
+        jge .da_done
+        mov dword [.col], 0
+.da_col:
+        cmp dword [.col], MAZE_W
+        jge .da_col_done
+
+        ; Pixel position
+        mov eax, [.col]
+        imul eax, CELL_SZ
+        add eax, GRID_X
+        mov [.px], eax
+        mov eax, [.row]
+        imul eax, CELL_SZ
+        add eax, GRID_Y
+        mov [.py], eax
+
+        ; Cell type
+        mov eax, [.row]
+        imul eax, MAZE_W
+        add eax, [.col]
+        movzx ecx, byte [maze + eax]
+
+        cmp ecx, WALL
+        je .da_wall
+        cmp ecx, SOLVE
+        je .da_solve
+        cmp ecx, START
+        je .da_start
+        cmp ecx, GOAL
+        je .da_goal
+        mov edi, COL_PATH
+        jmp .da_fill
+.da_wall:
+        mov edi, COL_WALL
+        jmp .da_fill
+.da_solve:
+        mov edi, COL_SOLVE
+        jmp .da_fill
+.da_start:
+        mov edi, COL_START
+        jmp .da_fill
+.da_goal:
+        mov edi, COL_GOAL
+
+.da_fill:
+        mov ebx, [.px]
+        mov ecx, [.py]
+        mov edx, CELL_SZ
+        mov esi, CELL_SZ
+        call vbe_fill_rect
+
+        inc dword [.col]
+        jmp .da_col
+.da_col_done:
+        inc dword [.row]
+        jmp .da_row
+
+.da_done:
+        ; Hint
+        mov ebx, GRID_X
+        mov ecx, GRID_Y + MAZE_H * CELL_SZ + 12
+        mov edx, msg_hint
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
+        popad
+        ret
+
+.row: dd 0
+.col: dd 0
+.px:  dd 0
+.py:  dd 0
 
 ;---------------------------------------
 ; Generate maze using iterative backtracking
@@ -400,8 +433,8 @@ prng:
 ;---------------------------------------
 ; Data
 ;---------------------------------------
-msg_generating: db "Generating maze...", 0x0A, 0
-msg_press_key:  db 0x0A, "Press any key to exit.", 0x0A, 0
+msg_title:      db "MAZE", 0
+msg_hint:       db "ANY KEY = NEW MAZE   ESC = QUIT", 0
 
 ; Seed PRNG from a constant (will be varied by timing)
 prng_state: dd 31337

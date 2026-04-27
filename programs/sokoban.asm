@@ -1,30 +1,34 @@
-; sokoban.asm - Sokoban puzzle game for Mellivora OS
-; Converted from bootsector sokoban (Public Domain) by Ish
-; 32-bit protected mode, uses INT 0x80 syscalls + direct VGA
+; sokoban.asm - Sokoban puzzle game
+; VBE 1024x768x32bpp. Arrows/WASD=move, R=restart, ESC=quit.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
 
 ; Tile types (bitfield)
-TILE_EMPTY      equ 0x00       ; 0000
-TILE_SPOT       equ 0x01       ; 0001
-TILE_BRICK      equ 0x02       ; 0010
-TILE_BRICK_SPOT equ 0x03       ; 0011
-TILE_WALL       equ 0x04       ; 0100
-TILE_PLAYER     equ 0x08       ; 1000
-TILE_PLAYER_SPOT equ 0x09      ; 1001
+TILE_EMPTY      equ 0x00
+TILE_SPOT       equ 0x01
+TILE_BRICK      equ 0x02
+TILE_BRICK_SPOT equ 0x03
+TILE_WALL       equ 0x04
+TILE_PLAYER     equ 0x08
+TILE_PLAYER_SPOT equ 0x09
 
-; Display characters and colors for each tile type (char, color pairs)
-; Index by tile type (0-9)
-display_chars:
-        db ' ', 0x07            ; 0: empty
-        db 0xFA, 0x06           ; 1: spot (middle dot, brown)
-        db 0xFE, 0x0C           ; 2: brick (square, bright red)
-        db 0xFE, 0x0A           ; 3: brick on spot (square, bright green)
-        db 0xDB, 0x71           ; 4: wall (full block, white bg blue fg)
-        db ' ', 0x07            ; 5: unused
-        db ' ', 0x07            ; 6: unused
-        db ' ', 0x07            ; 7: unused
-        db 0x02, 0x0F           ; 8: player (smiley, bright white)
-        db 0x02, 0x0F           ; 9: player on spot
+CELL_SZ         equ 60
+
+COL_BG          equ 0x00101010
+COL_EMPTY       equ 0x00181818
+COL_WALL        equ 0x004466AA
+COL_BRICK       equ 0x00CC8833
+COL_BSPT        equ 0x0033BB44
+COL_SPOT_DOT    equ 0x00886644
+COL_PLAYER      equ 0x00FFEE44
+COL_PLSPT       equ 0x00FFCC44
+COL_WHITE       equ 0x00FFFFFF
+COL_DIM         equ 0x00888888
+COL_GREEN       equ 0x0033CC44
+COL_YELLOW      equ 0x00FFE040
 
 ; Level data format: width, height, player_x, player_y, then tiles (compressed: 2 tiles per byte)
 ; Level 1 (14x10) - from original sokoban
@@ -73,10 +77,125 @@ level_table:
 NUM_LEVELS      equ 3
 
 start:
+        VBE_GAME_INIT
         mov dword [current_level], 0
-        mov dword [moves], 0
+        ; Load persistent levels-cleared count from /scores/sokoban
+        mov esi, hs_name_sk
+        call hs_load
+        mov [total_cleared], eax
+        call load_level_init
 
-load_level:
+main_loop:
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .nk
+        cmp al, KEY_ESC
+        je .quit
+        cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
+        je .quit
+
+        cmp dword [game_state], 0
+        jne .any_key
+
+        cmp al, 'r'
+        je .restart
+        cmp al, 'R'
+        je .restart
+
+        cmp al, KEY_UP
+        je .try_up
+        cmp al, 'w'
+        je .try_up
+        cmp al, KEY_DOWN
+        je .try_down
+        cmp al, 's'
+        je .try_down
+        cmp al, KEY_LEFT
+        je .try_left
+        cmp al, 'a'
+        je .try_left
+        cmp al, KEY_RIGHT
+        je .try_right
+        cmp al, 'd'
+        je .try_right
+        jmp .nk
+
+.try_up:
+        mov eax, [level_w]
+        neg eax
+        jmp .do_move
+.try_down:
+        mov eax, [level_w]
+        jmp .do_move
+.try_left:
+        mov eax, -1
+        jmp .do_move
+.try_right:
+        mov eax, 1
+.do_move:
+        call try_move
+        call check_win
+        cmp eax, 1
+        je .level_done
+        call draw_all
+        jmp .nk
+
+.level_done:
+        ; Bump persistent levels-cleared, save, win SFX
+        pushad
+        mov eax, [total_cleared]
+        inc eax
+        mov [total_cleared], eax
+        mov ebx, [total_cleared]
+        mov esi, hs_name_sk
+        call hs_save
+        call audio_sfx_win
+        popad
+        inc dword [current_level]
+        cmp dword [current_level], NUM_LEVELS
+        jge .all_done
+        mov dword [game_state], 1
+        call draw_all
+        jmp .nk
+.all_done:
+        mov dword [game_state], 2
+        call draw_all
+        jmp .nk
+
+.any_key:
+        cmp dword [game_state], 1
+        jne .all_key
+        mov dword [game_state], 0
+        call load_level_init
+        call draw_all
+        jmp .nk
+.all_key:
+        ; game_state=2: any key exits
+        jmp .quit
+
+.restart:
+        call load_level_init
+        call draw_all
+        jmp .nk
+
+.nk:
+        mov eax, SYS_SLEEP
+        mov ebx, 1
+        int 0x80
+        jmp main_loop
+
+.quit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
+        int 0x80
+
+;--------------------------------------
+load_level_init:
+        pushad
         ; Get level pointer
         mov eax, [current_level]
         mov esi, [level_table + eax*4]
@@ -88,7 +207,7 @@ load_level:
         mov [level_h], eax
         movzx eax, word [esi + 2]
         mov [player_pos], eax
-        add esi, 4              ; skip header
+        add esi, 4
 
         ; Calculate level size
         mov eax, [level_w]
@@ -97,7 +216,7 @@ load_level:
 
         ; Decompress level into current_map
         mov edi, current_map
-        mov ecx, eax            ; total tiles
+        mov ecx, eax
 .decompress:
         cmp ecx, 0
         jle .decompress_done
@@ -117,128 +236,16 @@ load_level:
         mov [edi], al
         inc edi
         dec ecx
-
 .decompress_next:
         inc esi
         jmp .decompress
 .decompress_done:
-
         mov dword [moves], 0
+        mov dword [game_state], 0
+        popad
+        call draw_all
+        ret
 
-        ; Draw
-        mov eax, SYS_CLEAR
-        int 0x80
-        call draw_header
-        call draw_level
-        jmp game_loop
-
-;=== Main game loop ===
-game_loop:
-        mov eax, SYS_GETCHAR
-        int 0x80
-
-        cmp al, 27              ; ESC
-        je exit_game
-        cmp al, 'q'
-        je exit_game
-        cmp al, 'r'
-        je .restart_level
-
-        ; Movement
-        cmp al, KEY_UP
-        je .try_up
-        cmp al, 'w'
-        je .try_up
-        cmp al, KEY_DOWN
-        je .try_down
-        cmp al, 's'
-        je .try_down
-        cmp al, KEY_LEFT
-        je .try_left
-        cmp al, 'a'
-        je .try_left
-        cmp al, KEY_RIGHT
-        je .try_right
-        cmp al, 'd'
-        je .try_right
-
-        jmp game_loop
-
-.restart_level:
-        jmp load_level
-
-.try_up:
-        mov eax, [level_w]
-        neg eax
-        call try_move
-        jmp .after_move
-
-.try_down:
-        mov eax, [level_w]
-        call try_move
-        jmp .after_move
-
-.try_left:
-        mov eax, -1
-        call try_move
-        jmp .after_move
-
-.try_right:
-        mov eax, 1
-        call try_move
-
-.after_move:
-        call draw_level
-        call check_win
-        cmp eax, 1
-        je .level_complete
-        jmp game_loop
-
-.level_complete:
-        ; Show win message
-        mov eax, SYS_SETCURSOR
-        mov ebx, 30
-        mov ecx, 1
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x2F           ; white on green
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_level_complete
-        int 0x80
-
-        ; Next level or game complete
-        inc dword [current_level]
-        mov eax, [current_level]
-        cmp eax, NUM_LEVELS
-        jge .all_complete
-
-        ; Wait for key
-        mov eax, SYS_GETCHAR
-        int 0x80
-        cmp al, 27
-        je exit_game
-
-        jmp load_level
-
-.all_complete:
-        mov eax, SYS_SETCURSOR
-        mov ebx, 25
-        mov ecx, 2
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_all_complete
-        int 0x80
-
-        ; Wait for key then exit
-        mov eax, SYS_GETCHAR
-        int 0x80
-        jmp exit_game
-
-;=== Try to move player by offset EAX ===
 try_move:
         pushad
         mov [move_offset], eax
@@ -327,139 +334,218 @@ check_win:
         pop ebx
         ret
 
-;=== Draw header ===
-draw_header:
+;--------------------------------------
+; VBE draw
+;--------------------------------------
+draw_all:
         pushad
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_title
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        mov ecx, 1
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_controls
-        int 0x80
+        ; Title
+        mov ebx, 10
+        mov ecx, 15
+        mov edx, msg_title
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_str
 
         ; Level number
-        mov eax, SYS_SETCURSOR
-        mov ebx, 60
-        xor ecx, ecx
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, msg_level
-        int 0x80
-        mov eax, [current_level]
-        inc eax
-        call print_dec
+        mov ebx, 700
+        mov ecx, 15
+        mov edx, msg_level_lbl
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_str
+        mov ebx, 800
+        mov ecx, 15
+        mov edx, [current_level]
+        inc edx
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_num
 
-        mov eax, SYS_PUTCHAR
-        mov ebx, '/'
-        int 0x80
-        mov eax, NUM_LEVELS
-        call print_dec
-        popad
-        ret
+        ; Moves counter
+        mov ebx, 700
+        mov ecx, 38
+        mov edx, msg_moves_lbl
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 770
+        mov ecx, 38
+        mov edx, [moves]
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_num
 
-;=== Draw the level centered on screen ===
-draw_level:
-        pushad
+        ; Calculate centering
+        mov eax, [level_w]
+        imul eax, CELL_SZ
+        mov ecx, 1024
+        sub ecx, eax
+        sar ecx, 1
+        mov [.off_x], ecx
 
-        ; Calculate offset to center
-        mov eax, VGA_WIDTH
-        sub eax, [level_w]
-        shr eax, 1
-        mov [draw_off_x], eax
+        mov eax, [level_h]
+        imul eax, CELL_SZ
+        mov ecx, 768
+        sub ecx, eax
+        sar ecx, 1
+        add ecx, 20
+        mov [.off_y], ecx
 
-        mov eax, VGA_HEIGHT
-        sub eax, [level_h]
-        shr eax, 1
-        mov [draw_off_y], eax
-
-        xor esi, esi            ; tile index
-.loop:
+        ; Draw tiles
+        mov dword [.ti], 0
+.da_tile:
+        mov esi, [.ti]
         cmp esi, [level_size]
-        jge .done
+        jge .da_status
 
-        ; Calculate x, y from index
         mov eax, esi
         xor edx, edx
-        div dword [level_w]     ; eax=row, edx=col
+        div dword [level_w]     ; EAX=row, EDX=col
+        imul eax, CELL_SZ
+        add eax, [.off_y]
+        mov [.py], eax
+        imul edx, CELL_SZ
+        add edx, [.off_x]
+        mov [.px], edx
 
-        mov ebx, eax
-        add ebx, [draw_off_y]  ; screen y
-        mov eax, edx
-        add eax, [draw_off_x]  ; screen x
+        movzx ecx, byte [current_map + esi]
+        mov [.tile], ecx
 
-        ; Look up display char and color
-        movzx edx, byte [current_map + esi]
-        cmp edx, 9
-        jg .skip
-        shl edx, 1              ; *2 for char,color pair
-        push eax
-        push ebx
-        movzx ecx, byte [display_chars + edx]
-        movzx edx, byte [display_chars + edx + 1]
-        pop ebx
-        pop eax
-        mov ch, dl              ; color
-        call vga_putchar_at
+        ; Select fill color
+        cmp ecx, TILE_WALL
+        je .da_wall
+        test ecx, TILE_PLAYER
+        jnz .da_player
+        test ecx, TILE_BRICK
+        jnz .da_brick
+        test ecx, TILE_SPOT
+        jnz .da_spot
+        mov edi, COL_EMPTY
+        jmp .da_fill
+.da_wall:
+        mov edi, COL_WALL
+        jmp .da_fill
+.da_player:
+        test ecx, TILE_SPOT
+        jnz .da_plspt
+        mov edi, COL_PLAYER
+        jmp .da_fill
+.da_plspt:
+        mov edi, COL_PLSPT
+        jmp .da_fill
+.da_brick:
+        test ecx, TILE_SPOT
+        jnz .da_bspt
+        mov edi, COL_BRICK
+        jmp .da_fill
+.da_bspt:
+        mov edi, COL_BSPT
+        jmp .da_fill
+.da_spot:
+        mov edi, COL_EMPTY
+.da_fill:
+        mov ebx, [.px]
+        mov ecx, [.py]
+        mov edx, CELL_SZ
+        mov esi, CELL_SZ
+        call vbe_fill_rect
 
-.skip:
-        inc esi
-        jmp .loop
-.done:
+        ; Draw symbol
+        mov ecx, [.tile]
+        cmp ecx, TILE_WALL
+        je .da_next_t
+        test ecx, TILE_PLAYER
+        jz .da_sym_spot
+        ; Player '@' centered, scale=2 → 10×14, offset (25,23)
+        mov ebx, [.px]
+        add ebx, 25
+        mov ecx, [.py]
+        add ecx, 23
+        mov edx, '@'
+        mov esi, COL_WHITE
+        mov eax, 2
+        call vbe_draw_char
+        jmp .da_next_t
+.da_sym_spot:
+        ; Spot dot (no brick)
+        mov ecx, [.tile]
+        test ecx, TILE_BRICK
+        jnz .da_next_t
+        test ecx, TILE_SPOT
+        jz .da_next_t
+        mov ebx, [.px]
+        add ebx, CELL_SZ/2
+        mov ecx, [.py]
+        add ecx, CELL_SZ/2
+        mov edx, 8
+        mov esi, COL_SPOT_DOT
+        call vbe_fill_circle
+.da_next_t:
+        inc dword [.ti]
+        jmp .da_tile
+
+.da_status:
+        ; Game state messages
+        cmp dword [game_state], 1
+        je .da_lc
+        cmp dword [game_state], 2
+        je .da_ac
+        ; Hint
+        mov ebx, 10
+        mov ecx, 745
+        mov edx, msg_hint
+        mov esi, COL_DIM
+        mov eax, 1
+        call vbe_draw_str
+        jmp .da_end
+.da_lc:
+        mov ebx, 350
+        mov ecx, 360
+        mov edx, msg_lc
+        mov esi, COL_GREEN
+        mov eax, 3
+        call vbe_draw_str
+        jmp .da_end
+.da_ac:
+        mov ebx, 300
+        mov ecx, 340
+        mov edx, msg_ac
+        mov esi, COL_YELLOW
+        mov eax, 3
+        call vbe_draw_str
+.da_end:
+        VBE_GAME_PRESENT
         popad
         ret
 
-;=== Put char at screen position (direct VGA) ===
-; EAX = x, EBX = y, CL = char, CH = color
-vga_putchar_at:
-        pushad
-        imul ebx, VGA_WIDTH * 2
-        lea edi, [VGA_BASE + ebx + eax*2]
-        mov [edi], cl
-        mov [edi+1], ch
-        popad
-        ret
-
-exit_game:
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x07
-        int 0x80
-        mov eax, SYS_EXIT
-        int 0x80
-
+.ti:    dd 0
+.tile:  dd 0
+.px:    dd 0
+.py:    dd 0
+.off_x: dd 0
+.off_y: dd 0
 ;=== Data ===
-msg_title:          db "SOKOBAN - Mellivora OS", 0
-msg_controls:       db "Arrows/WASD:Move  R:Restart  ESC:Quit", 0
-msg_level:          db "Level ", 0
-msg_level_complete: db " LEVEL COMPLETE! Press any key... ", 0
-msg_all_complete:   db "Congratulations! All levels complete!", 0
+msg_title:   db "SOKOBAN", 0
+msg_level_lbl: db "LVL:", 0
+msg_moves_lbl: db "MOVES:", 0
+msg_hint:    db "ARROWS=MOVE  R=RESTART  ESC=QUIT", 0
+msg_lc:      db "LEVEL COMPLETE", 0
+msg_ac:      db "YOU WIN!", 0
 
 ;=== BSS ===
 current_level:  dd 0
+game_state:     dd 0
 level_w:        dd 0
 level_h:        dd 0
 level_size:     dd 0
 player_pos:     dd 0
 moves:          dd 0
+hs_name_sk:     db "sokoban", 0
+total_cleared:  dd 0
 move_offset:    dd 0
 draw_off_x:     dd 0
 draw_off_y:     dd 0

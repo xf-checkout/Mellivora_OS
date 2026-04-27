@@ -1,7 +1,37 @@
 ; rogue.asm - ASCII Roguelike Dungeon Crawler for Mellivora OS
-; Explore procedurally generated dungeons, fight monsters, collect loot.
-; Arrow keys to move, 'q' to quit, '?' for help.
+; VBE 1024x768. Arrow keys/hjkl to move, q=quit, ?=help.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
+%include "lib/audio.inc"
+%include "lib/highscore.inc"
+
+; VBE tile rendering
+CELL_SZ         equ 11
+MAP_DRAW_X      equ 72
+MAP_DRAW_Y      equ 20
+STAT_Y          equ 280
+MSG_Y           equ 300
+
+; Tile colors (0x00RRGGBB)
+COL_VOID        equ 0x00111111
+COL_WALL        equ 0x00556655
+COL_FLOOR       equ 0x00333333
+COL_DOOR        equ 0x00AA7733
+COL_STAIRS      equ 0x00FFEE00
+COL_PLAYER      equ 0x0000FFAA
+COL_MON_DEF     equ 0x00FF4444
+COL_MON_GRN     equ 0x0044FF44
+COL_MON_BLU     equ 0x004444FF
+COL_MON_PUR     equ 0x00CC44CC
+COL_MON_YEL     equ 0x00FFCC00
+COL_ITEM_POT    equ 0x00FF44FF
+COL_ITEM_GOLD   equ 0x00FFEE00
+COL_ITEM_SWD    equ 0x00FFFFFF
+COL_ITEM_ARM    equ 0x0044CCFF
+COL_STAT        equ 0x00CCCCCC
+COL_MSG         equ 0x00FFDD44
+COL_BG          equ 0x00111111
 
 ; Map constants
 MAP_W           equ 80
@@ -39,6 +69,7 @@ ITEM_SWORD      equ 3
 ITEM_ARMOR      equ 4
 
 start:
+        VBE_GAME_INIT
         ; Seed random
         mov eax, SYS_GETTIME
         int 0x80
@@ -65,6 +96,8 @@ start:
         jz .idle
 
         cmp al, 'q'
+        je .quit
+        cmp al, 'Q'
         je .quit
         cmp al, 27
         je .quit
@@ -218,13 +251,10 @@ start:
         jmp .game_loop
 
 .quit:
-        mov eax, SYS_CLEAR
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
         int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, COLOR_DEFAULT
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+        xor eax, eax
         int 0x80
 
 ;=======================================
@@ -880,39 +910,36 @@ pickup_item:
 ;=======================================
 full_redraw:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        ; Draw map tiles
-        xor ecx, ecx           ; row
+        ; --- Draw map tiles ---
+        mov dword [.dr], 0
 .draw_row:
-        cmp ecx, MAP_H
+        cmp dword [.dr], MAP_H
         jge .draw_entities
 
-        xor ebx, ebx           ; col
+        mov dword [.dc], 0
 .draw_col:
-        cmp ebx, MAP_W
+        cmp dword [.dc], MAP_W
         jge .draw_next_row
 
-        ; Compute FOV (simple distance check from player)
-        mov eax, ebx
+        ; FOV check
+        mov eax, [.dc]
         sub eax, [player_x]
         imul eax, eax
-        mov edx, ecx
+        mov edx, [.dr]
         sub edx, [player_y]
         imul edx, edx
         add eax, edx
-        cmp eax, 100            ; radius ~10
+        cmp eax, 100
         jg .draw_dark
 
         ; Get tile
-        mov eax, ecx
+        mov eax, [.dr]
         imul eax, MAP_W
-        add eax, ebx
-
+        add eax, [.dc]
         movzx edx, byte [map + eax]
-        cmp dl, TILE_VOID
-        je .draw_dark
         cmp dl, TILE_WALL
         je .draw_wall
         cmp dl, TILE_FLOOR
@@ -920,322 +947,428 @@ full_redraw:
         cmp dl, TILE_DOOR
         je .draw_door
         cmp dl, TILE_CORRIDOR
-        je .draw_corr
+        je .draw_floor
         cmp dl, TILE_STAIRS
         je .draw_stairs
         jmp .draw_dark
 
 .draw_wall:
-        mov al, '#'
-        mov ah, 0x08            ; Dark gray
+        mov dword [.tc], COL_WALL
+        mov dword [.tchar], '#'
         jmp .draw_put
 .draw_floor:
-        mov al, 0xFA            ; Middle dot
-        mov ah, 0x07            ; Gray
+        mov dword [.tc], COL_FLOOR
+        mov dword [.tchar], '.'
         jmp .draw_put
 .draw_door:
-        mov al, '+'
-        mov ah, 0x06            ; Brown
-        jmp .draw_put
-.draw_corr:
-        mov al, 0xFA
-        mov ah, 0x07
+        mov dword [.tc], COL_DOOR
+        mov dword [.tchar], '+'
         jmp .draw_put
 .draw_stairs:
-        mov al, '>'
-        mov ah, 0x0E            ; Yellow
+        mov dword [.tc], COL_STAIRS
+        mov dword [.tchar], '>'
         jmp .draw_put
 .draw_dark:
-        mov al, ' '
-        mov ah, 0x00
+        inc dword [.dc]
+        jmp .draw_col
 .draw_put:
-        ; Write directly to VGA
-        push ecx
-        push ebx
-        imul ecx, MAP_W
-        add ecx, ebx
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
-        pop ebx
-        pop ecx
-        inc ebx
+        ; Fill tile background
+        mov ebx, [.dc]
+        imul ebx, CELL_SZ
+        add ebx, MAP_DRAW_X
+        mov ecx, [.dr]
+        imul ecx, CELL_SZ
+        add ecx, MAP_DRAW_Y
+        mov edx, CELL_SZ
+        mov esi, CELL_SZ
+        mov edi, COL_FLOOR
+        cmp dword [.tc], COL_WALL
+        je .fill_wall
+        cmp dword [.tc], COL_DOOR
+        je .fill_door
+        cmp dword [.tc], COL_STAIRS
+        je .fill_stairs
+        jmp .do_fill
+.fill_wall:
+        mov edi, COL_WALL
+        jmp .do_fill
+.fill_door:
+        mov edi, COL_DOOR
+        jmp .do_fill
+.fill_stairs:
+        mov edi, COL_STAIRS
+.do_fill:
+        call vbe_fill_rect
+
+        ; Draw tile char (scale=1, 5x7)
+        mov ebx, [.dc]
+        imul ebx, CELL_SZ
+        add ebx, MAP_DRAW_X + 3
+        mov ecx, [.dr]
+        imul ecx, CELL_SZ
+        add ecx, MAP_DRAW_Y + 2
+        mov edx, [.tchar]
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_char
+
+        inc dword [.dc]
         jmp .draw_col
 
 .draw_next_row:
-        inc ecx
+        inc dword [.dr]
         jmp .draw_row
 
 .draw_entities:
-        ; Draw items
-        xor esi, esi
+        ; --- Draw items ---
+        mov dword [.ei], 0
 .de_items:
-        cmp esi, MAX_ITEMS
+        cmp dword [.ei], MAX_ITEMS
         jge .de_mons
-        cmp byte [item_type + esi], ITEM_NONE
+        mov eax, [.ei]
+        cmp byte [item_type + eax], ITEM_NONE
         je .de_inext
 
-        ; Check FOV
-        mov eax, [item_x + esi*4]
-        sub eax, [player_x]
-        imul eax, eax
-        mov edx, [item_y + esi*4]
-        sub edx, [player_y]
-        imul edx, edx
-        add eax, edx
-        cmp eax, 100
+        ; FOV check
+        mov eax, [.ei]
+        mov ebx, [item_x + eax*4]
+        sub ebx, [player_x]
+        imul ebx, ebx
+        mov eax, [.ei]
+        mov ecx, [item_y + eax*4]
+        sub ecx, [player_y]
+        imul ecx, ecx
+        add ebx, ecx
+        cmp ebx, 100
         jg .de_inext
 
-        ; Draw item
-        movzx eax, byte [item_type + esi]
-        cmp al, ITEM_POTION
-        je .draw_potion
-        cmp al, ITEM_GOLD
-        je .draw_gold_i
-        cmp al, ITEM_SWORD
-        je .draw_sword_i
-        cmp al, ITEM_ARMOR
-        je .draw_armor_i
-        jmp .de_inext
-
-.draw_potion:
-        mov al, '!'
-        mov ah, 0x0D            ; Light magenta
+        mov eax, [.ei]
+        movzx edx, byte [item_type + eax]
+        cmp dl, ITEM_POTION
+        je .item_pot
+        cmp dl, ITEM_GOLD
+        je .item_gold
+        cmp dl, ITEM_SWORD
+        je .item_swd
+        jmp .item_arm
+.item_pot:
+        mov dword [.tc], COL_ITEM_POT
+        mov dword [.tchar], '!'
         jmp .de_iput
-.draw_gold_i:
-        mov al, '$'
-        mov ah, 0x0E            ; Yellow
+.item_gold:
+        mov dword [.tc], COL_ITEM_GOLD
+        mov dword [.tchar], '$'
         jmp .de_iput
-.draw_sword_i:
-        mov al, '/'
-        mov ah, 0x0F            ; White
+.item_swd:
+        mov dword [.tc], COL_ITEM_SWD
+        mov dword [.tchar], '/'
         jmp .de_iput
-.draw_armor_i:
-        mov al, '['
-        mov ah, 0x03            ; Cyan
+.item_arm:
+        mov dword [.tc], COL_ITEM_ARM
+        mov dword [.tchar], '['
 .de_iput:
-        push ecx
-        mov ecx, [item_y + esi*4]
-        imul ecx, MAP_W
-        add ecx, [item_x + esi*4]
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
-        pop ecx
+        mov eax, [.ei]
+        mov ebx, [item_x + eax*4]
+        imul ebx, CELL_SZ
+        add ebx, MAP_DRAW_X + 3
+        mov ecx, [item_y + eax*4]
+        imul ecx, CELL_SZ
+        add ecx, MAP_DRAW_Y + 2
+        mov edx, [.tchar]
+        mov esi, [.tc]
+        mov eax, 1
+        call vbe_draw_char
 .de_inext:
-        inc esi
+        inc dword [.ei]
         jmp .de_items
 
 .de_mons:
-        ; Draw monsters
-        xor esi, esi
+        ; --- Draw monsters ---
+        mov dword [.mi], 0
 .de_mloop:
-        cmp esi, MAX_MONSTERS
+        cmp dword [.mi], MAX_MONSTERS
         jge .de_player
-        cmp byte [mon_type + esi], MON_NONE
+        mov eax, [.mi]
+        cmp byte [mon_type + eax], MON_NONE
         je .de_mnext
 
-        ; FOV check
-        mov eax, [mon_x + esi*4]
-        sub eax, [player_x]
-        imul eax, eax
-        mov edx, [mon_y + esi*4]
-        sub edx, [player_y]
-        imul edx, edx
-        add eax, edx
-        cmp eax, 100
+        ; FOV
+        mov eax, [.mi]
+        mov ebx, [mon_x + eax*4]
+        sub ebx, [player_x]
+        imul ebx, ebx
+        mov eax, [.mi]
+        mov ecx, [mon_y + eax*4]
+        sub ecx, [player_y]
+        imul ecx, ecx
+        add ebx, ecx
+        cmp ebx, 100
         jg .de_mnext
 
-        ; Monster glyph
-        movzx eax, byte [mon_type + esi]
-        mov ah, 0x04            ; Red
-        cmp al, MON_RAT
-        je .mg_rat
-        cmp al, MON_BAT
-        je .mg_bat
-        cmp al, MON_SNAKE
-        je .mg_snake
-        cmp al, MON_GOBLIN
-        je .mg_gob
-        cmp al, MON_ORC
-        je .mg_orc
-        cmp al, MON_TROLL
-        je .mg_troll
-        jmp .de_mnext
-.mg_rat:    mov al, 'r' & 0xFF
-            mov ah, 0x06
-            jmp .de_mput
-.mg_bat:    mov al, 'b'
-            mov ah, 0x05
-            jmp .de_mput
-.mg_snake:  mov al, 's'
-            mov ah, 0x02
-            jmp .de_mput
-.mg_gob:    mov al, 'g'
-            mov ah, 0x0A
-            jmp .de_mput
-.mg_orc:    mov al, 'o'
-            mov ah, 0x0C
-            jmp .de_mput
-.mg_troll:  mov al, 'T'
-            mov ah, 0x04
-
+        mov eax, [.mi]
+        movzx edx, byte [mon_type + eax]
+        cmp dl, MON_RAT
+        je .mon_rat
+        cmp dl, MON_BAT
+        je .mon_bat
+        cmp dl, MON_SNAKE
+        je .mon_snake
+        cmp dl, MON_GOBLIN
+        je .mon_gob
+        cmp dl, MON_ORC
+        je .mon_orc
+.mon_troll:
+        mov dword [.tc], COL_MON_DEF
+        mov dword [.tchar], 'T'
+        jmp .de_mput
+.mon_rat:
+        mov dword [.tc], COL_MON_YEL
+        mov dword [.tchar], 'R'
+        jmp .de_mput
+.mon_bat:
+        mov dword [.tc], COL_MON_PUR
+        mov dword [.tchar], 'B'
+        jmp .de_mput
+.mon_snake:
+        mov dword [.tc], COL_MON_GRN
+        mov dword [.tchar], 'S'
+        jmp .de_mput
+.mon_gob:
+        mov dword [.tc], COL_MON_GRN
+        mov dword [.tchar], 'G'
+        jmp .de_mput
+.mon_orc:
+        mov dword [.tc], COL_MON_DEF
+        mov dword [.tchar], 'O'
 .de_mput:
-        push ecx
-        mov ecx, [mon_y + esi*4]
-        imul ecx, MAP_W
-        add ecx, [mon_x + esi*4]
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
-        pop ecx
+        mov eax, [.mi]
+        mov ebx, [mon_x + eax*4]
+        imul ebx, CELL_SZ
+        add ebx, MAP_DRAW_X + 3
+        mov ecx, [mon_y + eax*4]
+        imul ecx, CELL_SZ
+        add ecx, MAP_DRAW_Y + 2
+        mov edx, [.tchar]
+        mov esi, [.tc]
+        mov eax, 1
+        call vbe_draw_char
 .de_mnext:
-        inc esi
+        inc dword [.mi]
         jmp .de_mloop
 
 .de_player:
-        ; Draw player '@' bright white on dark
-        mov al, '@'
-        mov ah, 0x0F
+        ; --- Draw player '@' ---
+        mov ebx, [player_x]
+        imul ebx, CELL_SZ
+        add ebx, MAP_DRAW_X + 3
         mov ecx, [player_y]
-        imul ecx, MAP_W
-        add ecx, [player_x]
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
+        imul ecx, CELL_SZ
+        add ecx, MAP_DRAW_Y + 2
+        mov edx, '@'
+        mov esi, COL_PLAYER
+        mov eax, 1
+        call vbe_draw_char
 
-        ; === Status bar (row 23) ===
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x70           ; Black on gray
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        mov ecx, 23
-        int 0x80
+        ; --- Status bar ---
+        ; "HP:xx/xx  ATK:x  DEF:x  AU:x  LV:x  DEPTH:x"
+        mov ebx, 72
+        mov ecx, STAT_Y
+        mov edx, str_hp
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
 
-        ; HP bar
-        mov eax, SYS_PRINT
-        mov ebx, str_hp
-        int 0x80
-        mov eax, [player_hp]
-        call print_num
-        mov eax, SYS_PUTCHAR
-        mov ebx, '/'
-        int 0x80
-        mov eax, [player_max_hp]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, str_space
-        int 0x80
+        mov ebx, 96
+        mov ecx, STAT_Y
+        mov edx, [player_hp]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
 
-        ; ATK
-        mov eax, SYS_PRINT
-        mov ebx, str_atk
-        int 0x80
-        mov eax, [player_atk]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, str_space
-        int 0x80
+        mov ebx, 116
+        mov ecx, STAT_Y
+        mov edx, str_slash
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
 
-        ; DEF
-        mov eax, SYS_PRINT
-        mov ebx, str_def
-        int 0x80
-        mov eax, [player_def]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, str_space
-        int 0x80
+        mov ebx, 122
+        mov ecx, STAT_Y
+        mov edx, [player_max_hp]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
 
-        ; Gold
-        mov eax, SYS_PRINT
-        mov ebx, str_gold
-        int 0x80
-        mov eax, [player_gold]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, str_space
-        int 0x80
+        mov ebx, 160
+        mov ecx, STAT_Y
+        mov edx, str_atk
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Level
-        mov eax, SYS_PRINT
-        mov ebx, str_level
-        int 0x80
-        mov eax, [player_level]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, str_space
-        int 0x80
+        mov ebx, 184
+        mov ecx, STAT_Y
+        mov edx, [player_atk]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
 
-        ; Depth
-        mov eax, SYS_PRINT
-        mov ebx, str_depth
-        int 0x80
-        mov eax, [depth]
-        call print_num
+        mov ebx, 210
+        mov ecx, STAT_Y
+        mov edx, str_def
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
 
-        ; Pad rest of row
-        mov eax, SYS_PRINT
-        mov ebx, str_pad
-        int 0x80
+        mov ebx, 234
+        mov ecx, STAT_Y
+        mov edx, [player_def]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
 
-        ; Message line (row 24)
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E           ; Yellow
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        xor ebx, ebx
-        mov ecx, 24
-        int 0x80
+        mov ebx, 260
+        mov ecx, STAT_Y
+        mov edx, str_gold
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 278
+        mov ecx, STAT_Y
+        mov edx, [player_gold]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
+
+        mov ebx, 320
+        mov ecx, STAT_Y
+        mov edx, str_level
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 338
+        mov ecx, STAT_Y
+        mov edx, [player_level]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
+
+        mov ebx, 360
+        mov ecx, STAT_Y
+        mov edx, str_depth
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 402
+        mov ecx, STAT_Y
+        mov edx, [depth]
+        mov esi, COL_STAT
+        mov eax, 1
+        call vbe_draw_num
+
+        ; --- Message line ---
         cmp byte [msg_buf], 0
         je .no_msg
-        mov eax, SYS_PRINT
-        mov ebx, msg_buf
-        int 0x80
+        mov ebx, 72
+        mov ecx, MSG_Y
+        mov edx, msg_buf
+        mov esi, COL_MSG
+        mov eax, 1
+        call vbe_draw_str
 .no_msg:
+        VBE_GAME_PRESENT
         popad
         ret
+
+.dr: dd 0
+.dc: dd 0
+.ei: dd 0
+.mi: dd 0
+.tc: dd 0
+.tchar: dd 0
 
 ;---------------------------------------
 ; draw_help
 ;---------------------------------------
 draw_help:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
+        mov edx, COL_BG
+        call vbe_clear_screen
 
-        mov eax, SYS_SETCURSOR
-        mov ebx, 20
-        mov ecx, 3
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, help_title
-        int 0x80
+        mov ebx, 350
+        mov ecx, 80
+        mov edx, help_title
+        mov esi, 0x00FFFFFF
+        mov eax, 2
+        call vbe_draw_str
 
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0B
-        int 0x80
-        mov esi, help_lines
-        mov ecx, 5
-.hl:    push ecx
-        mov eax, SYS_SETCURSOR
-        mov ebx, 15
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, esi
-        int 0x80
-.hl_scan:
-        lodsb
-        test al, al
-        jnz .hl_scan
-        pop ecx
-        inc ecx
-        cmp ecx, 18
-        jl .hl
+        ; Help lines
+        mov ebx, 280
+        mov ecx, 130
+        mov edx, help_l1
+        mov esi, 0x0088CCFF
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 145
+        mov edx, help_l2
+        mov esi, 0x0088CCFF
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 160
+        mov edx, help_l3
+        mov esi, 0x0088CCFF
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 175
+        mov edx, help_l4
+        mov esi, 0x0088CCFF
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 200
+        mov edx, help_s1
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 215
+        mov edx, help_s2
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 230
+        mov edx, help_s3
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 245
+        mov edx, help_s4
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_str
+        mov ebx, 280
+        mov ecx, 260
+        mov edx, help_s5
+        mov esi, 0x00AAAAAA
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 350
+        mov ecx, 310
+        mov edx, help_press
+        mov esi, 0x00888888
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
         popad
         ret
 
@@ -1244,45 +1377,64 @@ draw_help:
 ;---------------------------------------
 draw_death:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x4F
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 25
-        mov ecx, 10
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, death_str1
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 20
-        mov ecx, 12
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, death_str2
-        int 0x80
-        mov eax, SYS_SETCURSOR
-        mov ebx, 18
-        mov ecx, 14
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x4E
-        int 0x80
-        mov eax, SYS_PRINT
-        mov ebx, death_str3
-        int 0x80
-        mov eax, [depth]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, death_str4
-        int 0x80
-        mov eax, [player_gold]
-        call print_num
-        mov eax, SYS_PRINT
-        mov ebx, death_str5
-        int 0x80
+        ; Persist best XP (only if higher) + lose SFX
+        mov esi, hs_name_rg
+        mov ebx, [player_xp]
+        call hs_update
+        call audio_sfx_lose
+        mov edx, 0x00330000
+        call vbe_clear_screen
+
+        mov ebx, 350
+        mov ecx, 300
+        mov edx, death_str1
+        mov esi, 0x00FF4444
+        mov eax, 3
+        call vbe_draw_str
+
+        mov ebx, 280
+        mov ecx, 360
+        mov edx, death_str2
+        mov esi, 0x00FFAA44
+        mov eax, 2
+        call vbe_draw_str
+
+        mov ebx, 280
+        mov ecx, 420
+        mov edx, death_str3
+        mov esi, 0x00FFEE44
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 430
+        mov ecx, 420
+        mov edx, [depth]
+        mov esi, 0x00FFEE44
+        mov eax, 1
+        call vbe_draw_num
+
+        mov ebx, 460
+        mov ecx, 420
+        mov edx, death_str4
+        mov esi, 0x00FFEE44
+        mov eax, 1
+        call vbe_draw_str
+
+        mov ebx, 520
+        mov ecx, 420
+        mov edx, [player_gold]
+        mov esi, 0x00FFEE44
+        mov eax, 1
+        call vbe_draw_num
+
+        mov ebx, 280
+        mov ecx, 440
+        mov edx, death_str5
+        mov esi, 0x00888888
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
         popad
         ret
 
@@ -1301,42 +1453,6 @@ set_message:
         ret
 
 ;---------------------------------------
-; print_num - print EAX decimal
-;---------------------------------------
-print_num:
-        pushad
-        test eax, eax
-        jnz .pn_nz
-        mov eax, SYS_PUTCHAR
-        mov ebx, '0'
-        int 0x80
-        popad
-        ret
-.pn_nz:
-        xor ecx, ecx
-        mov ebx, 10
-.pn_push:
-        test eax, eax
-        jz .pn_pop
-        xor edx, edx
-        div ebx
-        push edx
-        inc ecx
-        jmp .pn_push
-.pn_pop:
-        test ecx, ecx
-        jz .pn_done
-        pop ebx
-        add ebx, '0'
-        mov eax, SYS_PUTCHAR
-        int 0x80
-        dec ecx
-        jmp .pn_pop
-.pn_done:
-        popad
-        ret
-
-;---------------------------------------
 ; rand - LFSR PRNG -> EAX
 ;---------------------------------------
 rand:
@@ -1349,36 +1465,31 @@ rand:
         ret
 
 ; === Strings ===
-str_hp:     db " HP:", 0
-str_atk:    db "Atk:", 0
-str_def:    db "Def:", 0
-str_gold:   db "Au:", 0
-str_level:  db "Lv:", 0
-str_depth:  db "Depth:", 0
-str_space:  db " ", 0
-str_pad:    db "                        ", 0
+str_hp:     db "HP:", 0
+str_slash:  db "/", 0
+str_atk:    db "ATK:", 0
+str_def:    db "DEF:", 0
+str_gold:   db "AU:", 0
+str_level:  db "LV:", 0
+str_depth:  db "DEPTH:", 0
 
-help_title: db "=== ROGUE - Help ===", 0
-help_lines:
-        db "Arrow Keys / hjkl   Move", 0
-        db ">                    Descend stairs", 0
-        db "?                    This help screen", 0
-        db "q / ESC              Quit", 0
-        db "", 0
-        db "Symbols:", 0
-        db "  @  You          #  Wall", 0
-        db "  >  Stairs       +  Door", 0
-        db "  !  Potion       $  Gold", 0
-        db "  /  Sword        [  Armor", 0
-        db "  r  Rat          b  Bat", 0
-        db "  s  Snake        g  Goblin", 0
-        db "  o  Orc          T  Troll", 0
+help_title: db "ROGUE - HELP", 0
+help_l1:    db "ARROW KEYS/HJKL  MOVE", 0
+help_l2:    db ">   DESCEND STAIRS", 0
+help_l3:    db "?   HELP", 0
+help_l4:    db "Q   QUIT", 0
+help_s1:    db "SYMBOLS: @ YOU   # WALL   > STAIRS", 0
+help_s2:    db "  + DOOR   ! POTION   $ GOLD", 0
+help_s3:    db "  / SWORD   [ ARMOR", 0
+help_s4:    db "  R RAT  B BAT  S SNAKE", 0
+help_s5:    db "  G GOBLIN  O ORC  T TROLL", 0
+help_press: db "PRESS ANY KEY", 0
 
-death_str1: db "*** YOU HAVE DIED ***", 0
-death_str2: db "The dungeon claims another soul.", 0
-death_str3: db "Reached depth ", 0
-death_str4: db " with ", 0
-death_str5: db " gold. Press any key.", 0
+death_str1: db "YOU HAVE DIED", 0
+death_str2: db "THE DUNGEON CLAIMS ANOTHER SOUL", 0
+death_str3: db "REACHED DEPTH", 0
+death_str4: db "WITH", 0
+death_str5: db "GOLD - PRESS ANY KEY", 0
 
 ; === BSS ===
 msg_buf:        times 80 db 0
@@ -1392,6 +1503,7 @@ player_def:     dd 0
 player_gold:    dd 0
 player_level:   dd 0
 player_xp:      dd 0
+hs_name_rg:     db "rogue", 0
 depth:          dd 0
 room_count:     dd 0
 rooms:          times MAX_ROOMS * 16 db 0  ; 4 dwords per room: x,y,w,h

@@ -464,7 +464,6 @@ Mellivora ships with a broad set of user-space programs organized in `/bin` and 
 | `chess` | Type moves (e.g. e2e4), ESC quit | Full chess with legal move validation |
 | `checkers` | Arrow keys, Space select/move, ESC quit | Checkers with forced-capture rules |
 | `blackjack` | Number keys for menu choices | Blackjack (21) card game |
-| `reversi` | Arrow keys, Enter place, ESC quit | Othello / Reversi strategy game |
 | `pong` | W/S keys (left), ↑↓ keys (right) | Two-paddle Pong (VBE) |
 | `wordle` | Type 5-letter words, Enter | Six-guess word puzzle |
 | `rogue` | hjkl / arrow keys, ESC quit | ASCII dungeon crawler |
@@ -478,6 +477,8 @@ Mellivora ships with a broad set of user-space programs organized in `/bin` and 
 | `nim` | Type number, Enter | Nim strategy game |
 | `simon` | Number keys 1–4 | Simon says memory game |
 | `puzzle15` | Arrow keys | Sliding 15-puzzle |
+| `pacman` | Arrows, R restart, ESC quit | Pac-Man-style maze chase — eat dots/pellets, hunt or flee 4 ghosts |
+| `sudoku` | Arrows + 1-9, 0/Space=clear, H=hint, R=new, ESC=quit | Classic 9x9 Sudoku with conflict highlighting and persistent solve count |
 | `guess` | Type numbers, Enter | Number guessing with hints |
 | `kingdom` | Number keys for menus | Medieval kingdom management simulation |
 | `life` | ESC quit | Conway's Game of Life — auto-running simulation (VBE) |
@@ -489,7 +490,7 @@ Mellivora ships with a broad set of user-space programs organized in `/bin` and 
 | `matrix` | ESC quit | Matrix rain animation |
 | `rain` | ESC quit | Rainfall animation |
 | `starfield` | ESC quit | Starfield fly-through |
-| `pipes` | ESC quit | Animated pipes screensaver |
+| `pipes` | Arrows + Enter, Space=start flow, R=restart, ESC quit | Pipe Dream puzzle: route flow from source to drain |
 | `lunar` | Thrust/rotate keys, ESC quit | Lunar lander game |
 | `lights` | Arrow keys, Space toggle | Lights-out puzzle |
 | `timewarp` | ESC quit, F-keys toolbar | TempleCode IDE — BASIC/PILOT/Logo interpreter with turtle graphics canvas |
@@ -497,6 +498,15 @@ Mellivora ships with a broad set of user-space programs organized in `/bin` and 
 | `solitaire` | Arrow keys + Enter, ESC quit | Klondike solitaire card game |
 | `worm` | Arrow keys | Multi-worm arena game |
 | `breakout` | ←→ move, ESC quit | Breakout / Arkanoid |
+
+**Persistent high scores (v6.5+)** — most games now save your best
+score (or total wins) to `/scores/<game>` and play short win/lose audio
+cues at the end of each round. Wired games include: `tetris`, `2048`,
+`snake`, `breakout`, `simon`, `galaga`, `mastermind`, `hangman`,
+`tictactoe`, `connect4`, `wordle`, `mine`, `puzzle15`,
+`lights`, `sokoban`, `guess`, `battleship`, `blackjack`, `nim`,
+`checkers`, `iago`, `solitaire`, `pipes`, `lunar`, `kingdom`,
+`rogue`, `outbreak`, `pacman`, `frogger`, and `sudoku`.
 
 ### Utilities (in /bin)
 
@@ -532,7 +542,7 @@ Mellivora ships with a broad set of user-space programs organized in `/bin` and 
 | `cal` | `cal` | Calendar for current month |
 | `calc` | `calc` | Interactive calculator (+, -, *, /, %) |
 | `mandel` | `mandel` | Mandelbrot set renderer |
-| `basic` | `basic` | BASIC language interpreter |
+| `basic` | `basic` | GW-BASIC-style interpreter with strings, `WHILE/WEND`, `DATA/READ`, and file mode |
 | `banner` | `banner` | Colorful ASCII art banner |
 | `colors` | `colors` | VGA color palette demo |
 | `fibonacci` | `fibonacci` | Fibonacci sequence |

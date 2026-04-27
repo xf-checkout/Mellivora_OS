@@ -1,5 +1,7 @@
 ; tetris.asm - Tetris — VBE pixel graphics
 %include "syscalls.inc"
+%include "lib/highscore.inc"
+%include "lib/audio.inc"
 
 ; ─── Board / layout ─────────────────────────────────────────────────
 BOARD_W         equ 10
@@ -145,6 +147,11 @@ init_game:
         mov eax, SYS_GETTIME
         int 0x80
         mov [rand_seed], eax
+
+        ; Load persistent high score (returns 0 if none)
+        mov esi, hs_name_tetris
+        call hs_load
+        mov [hi_score], eax
 
         xor eax, eax
         mov [score], eax
@@ -865,6 +872,19 @@ draw_ui_vbe:
         mov edi, 0xFFFF44
         call fb_draw_num
 
+        ; High score
+        mov ebx, UI_X
+        mov ecx, UI_Y_SCORE + 30
+        mov esi, ui_hi
+        mov edi, C_TEXT
+        call fb_draw_text
+
+        mov eax, [hi_score]
+        mov ebx, UI_X
+        mov ecx, UI_Y_SCORE + 44
+        mov edi, 0xFFAA44
+        call fb_draw_num
+
         ; Level
         mov ebx, UI_X
         mov ecx, UI_Y_LEVEL
@@ -923,6 +943,16 @@ draw_ui_vbe:
 ; game_over_loop  (VBE rewrite)
 ; ===========================================================================
 game_over_loop:
+        ; Persist high score (only updates if new > old) and play SFX once
+        cmp byte [go_processed], 0
+        jne .skip_persist
+        mov byte [go_processed], 1
+        mov esi, hs_name_tetris
+        mov ebx, [score]
+        call hs_update
+        mov [hi_score], eax
+        call audio_sfx_lose
+.skip_persist:
         call render_frame
 
         ; Red banner
@@ -952,11 +982,16 @@ game_over_loop:
         je .go_restart
         cmp al, 'R'
         je .go_restart
+        cmp al, 'q'
+        je exit_program
+        cmp al, 'Q'
+        je exit_program
         cmp al, 0x1B
         je exit_program
         jmp .go_wait
 
 .go_restart:
+        mov byte [go_processed], 0
         call init_game
         jmp main_loop
 
@@ -1065,6 +1100,7 @@ fb_draw_num:
 ui_title:       db "TETRIS", 0
 ui_next:        db "NEXT:", 0
 ui_score:       db "Score:", 0
+ui_hi:          db "High:", 0
 ui_level:       db "Level:", 0
 ui_lines:       db "Lines:", 0
 ui_ctrl1:       db "L/R: Move", 0
@@ -1074,6 +1110,9 @@ ui_ctrl4:       db "Spc: Hard drop", 0
 msg_paused:     db "PAUSED", 0
 msg_game_over:  db "GAME OVER", 0
 msg_restart:    db "R: Restart  ESC: Quit", 0
+hs_name_tetris: db "tetris", 0
+hi_score:       dd 0
+go_processed:   db 0
 
 board:          times BOARD_CELLS db 0
 
@@ -1094,7 +1133,9 @@ game_over:      db 0
 lock_val:       db 0
 cell_tmp:       dd 0
 
-section .bss
-fb_addr:        resd 1
-fb_pitch:       resd 1
-num_buf:        resb 12
+; Storage previously declared in `section .bss` — converted to inline
+; zero-initialized data because flat binaries do NOT receive a runtime
+; .bss segment from the loader.
+fb_addr:        dd 0
+fb_pitch:       dd 0
+num_buf:        times 12 db 0

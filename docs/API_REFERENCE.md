@@ -15,6 +15,18 @@ All libraries live in `programs/lib/` and are included via NASM `%include` direc
 %include "lib/data.inc"         ; Stacks, queues, bitmaps, arrays
 %include "lib/net.inc"          ; TCP/UDP sockets, DNS, ICMP ping
 %include "lib/gui.inc"          ; Burrows desktop GUI wrappers
+%include "lib/vbe.inc"          ; VBE pixel primitives (clear/rect/lines)
+%include "lib/font.inc"         ; 5x7 bitmap font + circle drawing
+%include "lib/vbe_game.inc"     ; VBE_GAME_INIT/PRESENT/POLL_KEY macros
+%include "lib/palette.inc"      ; Shared MV_* color constants (v6.1+)
+%include "lib/vbe_ui.inc"       ; Header bar, status bar, modal, input widget (v6.1+)
+%include "lib/audio.inc"        ; Note table + score player + SFX (v6.5+)
+%include "lib/highscore.inc"    ; Persistent /scores/<game> high scores (v6.5+)
+```
+
+> See [STYLE_GUIDE.md](STYLE_GUIDE.md) for the authoritative cross-program
+> conventions (calling rules, key bindings, color palette, layout zones,
+> the flat-binary BSS rule, and the per-commit code-quality checklist).
 
 start:
         ; Your code here
@@ -726,11 +738,11 @@ SPRITE_BEGIN spr_ship, 8, 8
 SPRITE_END
 
 start:
-    ; Enter 640x480x32 mode
+    ; Enter 1024x768x32 mode
     mov eax, SYS_FRAMEBUF
     mov ebx, 1
-    mov ecx, 640
-    mov edx, 480
+    mov ecx, 1024
+    mov edx, 768
     mov esi, 32
     int 0x80
 
@@ -768,3 +780,42 @@ fb_pitch: resd 1
 ship_x:   resd 1
 ship_y:   resd 1
 ```
+
+---
+
+## `lib/audio.inc` — Music & SFX (v6.5+)
+
+Note frequency constants (`NOTE_C2` … `NOTE_C7`) and helpers built on
+`SYS_BEEP` (24). See [STYLE_GUIDE.md](STYLE_GUIDE.md) for usage rules.
+
+| Function | In | Out | Notes |
+|---|---|---|---|
+| `audio_note` | `EBX`=Hz, `ECX`=ticks (10 ms each) | — | One beep, registers preserved |
+| `audio_rest` | `ECX`=ticks | — | Silence via `SYS_SLEEP` |
+| `audio_play_score` | `ESI`→ packed `(byte freq, byte ticks)`, term `NOTE_END` | — | For freqs ≤ 255 Hz |
+| `audio_play_score_w` | `ESI`→ packed `(word freq, word ticks)`, term `NOTE_END_W` | — | Full Hz range |
+| `audio_sfx_click` / `_ok` / `_error` / `_win` / `_lose` | — | — | Stock cues for UI feedback |
+
+Special tokens in scores: `NOTE_REST` (0xFE) / `NOTE_REST_W` (0xFFFE)
+insert silence. All entry points preserve every register via
+`pushad`/`popad`.
+
+---
+
+## `lib/highscore.inc` — Persistent High Scores (v6.5+)
+
+Each game's high score lives in `/scores/<name>` as a single
+little-endian dword. The `/scores` directory is auto-created on first
+write.
+
+| Function | In | Out | Notes |
+|---|---|---|---|
+| `hs_load` | `ESI`=name | `EAX`=score (0 if missing) | Read-only |
+| `hs_save` | `ESI`=name, `EBX`=score | `EAX`=0 ok / -1 err | Always writes |
+| `hs_update` | `ESI`=name, `EBX`=candidate | `EAX`=new high after compare | Writes only if `candidate > old` |
+
+Names should be short, lowercase, alphanumeric (e.g. `"tetris"`,
+`"snake"`). The library appends `/scores/` automatically. All entry
+points preserve every register via `pushad`/`popad` except the
+documented `EAX`.
+

@@ -1,205 +1,101 @@
 ; matrix.asm - The Matrix Digital Rain for Mellivora OS
-; Cascading green characters just like the movie.
+; VBE 1024x768x32bpp. Cascading green characters.
 ; Press any key to exit.
 %include "syscalls.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
 
-SCREEN_W        equ 80
-SCREEN_H        equ 25
-TICK_DELAY      equ 4           ; ~25fps
-NUM_DROPS       equ 40          ; Number of active rain columns
+; Character cell layout at scale=2: 10x14 pixels per cell
+CHAR_W          equ 10
+CHAR_H          equ 14
+COLS            equ 102         ; 1024 / 10
+ROWS            equ 54          ; 768  / 14
+NUM_DROPS       equ 60
+TICK_DELAY      equ 3
+
+COL_BLACK       equ 0x00000000
+COL_HEAD        equ 0x00FFFFFF   ; bright white head
+COL_BRIGHT_G    equ 0x0044FF44   ; bright green near-head
+COL_MID_G       equ 0x0000CC00   ; mid green
+COL_DIM_G       equ 0x00006600   ; dim green tail
 
 start:
-        ; Seed random
+        VBE_GAME_INIT
+
+        ; Seed random from timer
         mov eax, SYS_GETTIME
         int 0x80
         mov [rand_state], eax
 
-        ; Clear screen to black
-        call clear_black
+        ; Clear to black
+        mov edx, COL_BLACK
+        call vbe_clear_screen
 
         ; Initialize drops
         xor esi, esi
 .init_drops:
         cmp esi, NUM_DROPS
         jge .main_loop
-
-        ; Random column
-        call rand
-        xor edx, edx
-        mov ecx, SCREEN_W
-        div ecx
-        mov [drop_col + esi*4], edx
-
-        ; Random starting row (negative = delay before visible)
-        call rand
-        xor edx, edx
-        mov ecx, 40
-        div ecx
-        sub edx, 15
-        mov [drop_row + esi*4], edx
-
-        ; Random length 5-20
-        call rand
-        xor edx, edx
-        mov ecx, 16
-        div ecx
-        add edx, 5
-        mov [drop_len + esi*4], edx
-
-        ; Random speed 1-3
-        call rand
-        xor edx, edx
-        mov ecx, 3
-        div ecx
-        inc edx
-        mov [drop_spd + esi*4], edx
-
+        call init_drop
         inc esi
         jmp .init_drops
 
 ;=== Main loop ===
 .main_loop:
-        ; Check for keypress
-        mov eax, SYS_READ_KEY
-        int 0x80
-        test eax, eax
-        jnz .exit
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        jne .exit
 
-        ; Update each drop
+        ; Clear shadow buffer to black each frame
+        mov edx, COL_BLACK
+        call vbe_clear_screen
+
+        ; Update and draw each drop
         xor esi, esi
 .drop_loop:
         cmp esi, NUM_DROPS
         jge .frame_done
 
-        ; Advance drop position by speed
+        ; Advance drop by speed
         mov eax, [drop_spd + esi*4]
         add [drop_row + esi*4], eax
 
-        mov ecx, [drop_row + esi*4]    ; head row
-        mov ebx, [drop_col + esi*4]    ; column
+        ; Draw the drop's trail
+        call draw_drop_col
 
-        ; Draw the head (bright white/green)
-        cmp ecx, 0
-        jl .drop_tail
-        cmp ecx, SCREEN_H
-        jge .drop_tail
-
-        ; Random character for head
-        call rand
-        xor edx, edx
-        push ecx
-        mov ecx, 94
-        div ecx
-        pop ecx
-        add edx, 33             ; printable ASCII 33-126
-        mov al, dl
-        mov ah, 0x0F            ; Bright white (the leading char)
-        call vga_write
-
-.drop_tail:
-        ; Make previous positions green, then dark green, then erase
-        mov ecx, [drop_row + esi*4]
-        dec ecx                 ; one behind head
-
-        ; Bright green trail (3 chars behind)
-        push esi
-        mov esi, 3
-.trail_green:
-        cmp ecx, 0
-        jl .trail_skip
-        cmp ecx, SCREEN_H
-        jge .trail_skip
-
-        ; Random char for shimmer effect
-        call rand
-        xor edx, edx
-        push ecx
-        mov ecx, 94
-        div ecx
-        pop ecx
-        add edx, 33
-        mov al, dl
-        mov ah, 0x0A            ; Bright green
-        call vga_write
-
-.trail_skip:
-        dec ecx
-        dec esi
-        jnz .trail_green
-        pop esi
-
-        ; Dark green chars (next chunk)
-        push esi
-        mov esi, [drop_len + esi*4]
-        sub esi, 3
-        cmp esi, 1
-        jl .trail2_done
-.trail_dark:
-        cmp ecx, 0
-        jl .trail2_skip
-        cmp ecx, SCREEN_H
-        jge .trail2_skip
-
-        ; 50% chance to change char for flicker
-        push edx
-        call rand
-        test eax, 1
-        pop edx
-        jz .trail2_keep
-
-        call rand
-        xor edx, edx
-        push ecx
-        mov ecx, 94
-        div ecx
-        pop ecx
-        add edx, 33
-        mov al, dl
-        mov ah, 0x02            ; Dark green
-        call vga_write
-        jmp .trail2_skip
-
-.trail2_keep:
-        ; Just recolor existing char to dark green
-        push edx
-        push ecx
-        imul ecx, SCREEN_W
-        add ecx, ebx
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov byte [ecx + 1], 0x02  ; Just change attribute
-        pop ecx
-        pop edx
-
-.trail2_skip:
-        dec ecx
-        dec esi
-        jnz .trail_dark
-.trail2_done:
-        pop esi
-
-        ; Erase the very tail
-        mov ecx, [drop_row + esi*4]
-        sub ecx, [drop_len + esi*4]
-        cmp ecx, 0
-        jl .drop_check_reset
-        cmp ecx, SCREEN_H
-        jge .drop_check_reset
-        mov al, ' '
-        mov ah, 0x00            ; Black
-        call vga_write
-
-.drop_check_reset:
-        ; Reset if fully off screen
-        mov ecx, [drop_row + esi*4]
-        sub ecx, [drop_len + esi*4]
-        cmp ecx, SCREEN_H
+        ; Reset drop if fully off screen
+        mov eax, [drop_row + esi*4]
+        sub eax, [drop_len + esi*4]
+        cmp eax, ROWS
         jl .drop_next
+        call init_drop
 
-        ; Respawn
+.drop_next:
+        inc esi
+        jmp .drop_loop
+
+.frame_done:
+        VBE_GAME_PRESENT
+        mov eax, SYS_SLEEP
+        mov ebx, TICK_DELAY
+        int 0x80
+        jmp .main_loop
+
+.exit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
+        int 0x80
+
+;---------------------------------------
+; init_drop: randomise drop[esi] fields
+;---------------------------------------
+init_drop:
+        pushad
         call rand
         xor edx, edx
-        mov ecx, SCREEN_W
+        mov ecx, COLS
         div ecx
         mov [drop_col + esi*4], edx
 
@@ -208,6 +104,7 @@ start:
         mov ecx, 20
         div ecx
         neg edx
+        dec edx
         mov [drop_row + esi*4], edx
 
         call rand
@@ -223,56 +120,91 @@ start:
         div ecx
         inc edx
         mov [drop_spd + esi*4], edx
-
-.drop_next:
-        inc esi
-        jmp .drop_loop
-
-.frame_done:
-        mov eax, SYS_SLEEP
-        mov ebx, TICK_DELAY
-        int 0x80
-        jmp .main_loop
-
-.exit:
-        mov eax, SYS_CLEAR
-        int 0x80
-        mov eax, SYS_SETCOLOR
-        mov ebx, COLOR_DEFAULT
-        int 0x80
-        mov eax, SYS_EXIT
-        xor ebx, ebx
-        int 0x80
-
-;---------------------------------------
-; vga_write: write char AL with attr AH at (EBX=col, ECX=row)
-;---------------------------------------
-vga_write:
-        push ecx
-        push edx
-        imul ecx, SCREEN_W
-        add ecx, ebx
-        shl ecx, 1
-        add ecx, VGA_BASE
-        mov [ecx], ax
-        pop edx
-        pop ecx
-        ret
-
-;---------------------------------------
-; clear_black: fill screen with black spaces
-;---------------------------------------
-clear_black:
-        pushad
-        mov edi, VGA_BASE
-        mov eax, 0x00200020
-        mov ecx, SCREEN_W * SCREEN_H / 2
-        rep stosd
         popad
         ret
 
 ;---------------------------------------
-; rand: LCG -> EAX
+; draw_drop_col: draw one complete drop (ESI = drop index)
+;---------------------------------------
+draw_drop_col:
+        pushad
+        mov ebp, esi
+
+        mov edi, [drop_len + ebp*4]   ; trail length
+        mov edx, [drop_row + ebp*4]   ; head row (cells)
+
+        xor ecx, ecx            ; ecx = distance from head (0=head)
+.dc_loop:
+        cmp ecx, edi
+        jge .dc_done
+
+        ; current row = head_row - dist
+        mov eax, edx
+        sub eax, ecx
+
+        ; Bounds check
+        cmp eax, 0
+        jl .dc_next
+        cmp eax, ROWS
+        jge .dc_next
+
+        ; pixel coords
+        imul eax, CHAR_H
+        mov [.dc_py], eax
+        mov eax, [drop_col + ebp*4]
+        imul eax, CHAR_W
+        mov [.dc_px], eax
+
+        ; colour by distance
+        cmp ecx, 0
+        je .dc_head
+        cmp ecx, 2
+        jle .dc_bright
+        cmp ecx, 5
+        jle .dc_mid
+        jmp .dc_dim
+
+.dc_head:   mov esi, COL_HEAD
+        jmp .dc_pick_char
+.dc_bright: mov esi, COL_BRIGHT_G
+        jmp .dc_pick_char
+.dc_mid:    mov esi, COL_MID_G
+        jmp .dc_pick_char
+.dc_dim:    mov esi, COL_DIM_G
+
+.dc_pick_char:
+        push ecx
+        push esi
+        call rand
+        pop esi
+        pop ecx
+        xor edx, edx
+        push ecx
+        mov ecx, 26
+        div ecx
+        pop ecx
+        add edx, 'A'            ; random A-Z
+
+        push ecx
+        mov ebx, [.dc_px]
+        mov ecx, [.dc_py]
+        mov eax, 2              ; scale=2
+        call vbe_draw_char
+        pop ecx
+
+.dc_next:
+        inc ecx
+        jmp .dc_loop
+
+.dc_done:
+        popad
+        ret
+
+.dc_px: dd 0
+.dc_py: dd 0
+
+;---------------------------------------
+; rand - LCG PRNG -> EAX
 ;---------------------------------------
 rand:
         mov eax, [rand_state]
@@ -289,3 +221,4 @@ drop_col:       times NUM_DROPS dd 0
 drop_row:       times NUM_DROPS dd 0
 drop_len:       times NUM_DROPS dd 0
 drop_spd:       times NUM_DROPS dd 0
+

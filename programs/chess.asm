@@ -1,104 +1,143 @@
-; chess.asm - Chess Game for Mellivora OS
-; Two-player chess with legal move validation, board display using CP437.
-; Move format: e2e4 (from-to in algebraic notation).
-; Commands: 'quit', 'new', 'help'
+; chess.asm - Chess for Mellivora OS
+; VBE 1024x768. Type move in e2e4 format, N=new game, ESC=quit.
 %include "syscalls.inc"
-%include "lib/io.inc"
-%include "lib/string.inc"
+%include "lib/vbe_game.inc"
+%include "lib/font.inc"
 
-; Piece constants (bit layout: 0x0P where P=piece type, color in high nibble)
-EMPTY   equ 0
-PAWN    equ 1
-KNIGHT  equ 2
-BISHOP  equ 3
-ROOK    equ 4
-QUEEN   equ 5
-KING    equ 6
-WHITE   equ 0x10
-BLACK   equ 0x20
-COLOR_MASK equ 0xF0
-PIECE_MASK equ 0x0F
+; Board layout
+CELL_SZ     equ 80
+BOARD_X     equ 192
+BOARD_Y     equ 64
+
+; Piece constants
+EMPTY       equ 0
+PAWN        equ 1
+KNIGHT      equ 2
+BISHOP      equ 3
+ROOK        equ 4
+QUEEN       equ 5
+KING        equ 6
+WHITE       equ 0x10
+BLACK       equ 0x20
+COLOR_MASK  equ 0xF0
+PIECE_MASK  equ 0x0F
+
+; Colors
+COL_LIGHT_SQ     equ 0x00D4A96A
+COL_DARK_SQ      equ 0x00805030
+COL_WHITE_PIECE  equ 0x00EEEECC
+COL_BLACK_PIECE  equ 0x00222244
 
 start:
+        VBE_GAME_INIT
         call init_board
         call draw_board
 
-;=== Main loop ===
 .main_loop:
-        ; Print prompt
-        cmp byte [turn], 0
-        jne .black_turn
-        mov esi, prompt_white
-        jmp .print_prompt
-.black_turn:
-        mov esi, prompt_black
-.print_prompt:
-        call io_print
+        VBE_GAME_POLL_KEY
+        cmp eax, -1
+        je .poll_wait
 
-        ; Read move
-        mov edi, input_buf
-        mov ecx, 16
-        call io_read_line
+        ; Normalize uppercase letters to lowercase
+        cmp al, 'A'
+        jl .not_upper
+        cmp al, 'Z'
+        jg .not_upper
+        or al, 0x20
+.not_upper:
+        cmp al, 'q'
+        je .do_quit
+        cmp al, 'Q'
+        je .do_quit
+        cmp al, KEY_ESC
+        je .do_quit
+        cmp al, 'n'
+        je .do_new
+        cmp al, 0x08        ; BKSP
+        je .do_bksp
 
-        ; Check commands
-        mov esi, input_buf
-        mov edi, cmd_quit
-        call str_icmp
-        test eax, eax
-        jz .quit
-        mov esi, input_buf
-        mov edi, cmd_new
-        call str_icmp
-        test eax, eax
-        jz .new_game
-        mov esi, input_buf
-        mov edi, cmd_help
-        call str_icmp
-        test eax, eax
-        jz .show_help
+        ; Accept valid input char based on position
+        movzx ecx, byte [input_len]
+        cmp ecx, 4
+        jge .main_loop
 
-        ; Parse move (e.g. "e2e4")
-        mov esi, input_buf
-        call parse_move         ; sets from_col/row, to_col/row, returns EAX=0 ok
-        test eax, eax
-        jnz .invalid_move
+        test ecx, 1
+        jz .expect_file
+        ; Odd position: expect rank digit 1-8
+        cmp al, '1'
+        jl .main_loop
+        cmp al, '8'
+        jg .main_loop
+        jmp .store_char
+.expect_file:
+        ; Even position: expect file letter a-h
+        cmp al, 'a'
+        jl .main_loop
+        cmp al, 'h'
+        jg .main_loop
 
-        ; Validate and execute
+.store_char:
+        movzx ecx, byte [input_len]
+        mov [input_buf + ecx], al
+        cmp ecx, 0
+        jne .no_err_clear
+        mov byte [input_err], 0
+.no_err_clear:
+        inc byte [input_len]
+        cmp byte [input_len], 4
+        jl .do_redraw
+        ; Try to execute move
+        mov esi, input_buf
+        call parse_move
+        test eax, eax
+        jnz .pm_err
         call validate_move
         test eax, eax
-        jnz .illegal_move
-
+        jnz .vm_err
         call make_move
-        ; Toggle turn
         xor byte [turn], 1
+        mov byte [input_len], 0
+        mov byte [input_err], 0
         call draw_board
-
-        ; Check for checkmate/stalemate would go here
+        jmp .main_loop
+.pm_err:
+        mov byte [input_err], 1
+        mov byte [input_len], 0
+        call draw_board
+        jmp .main_loop
+.vm_err:
+        mov byte [input_err], 2
+        mov byte [input_len], 0
+        call draw_board
         jmp .main_loop
 
-.invalid_move:
-        mov esi, err_format
-        call io_println
+.do_bksp:
+        cmp byte [input_len], 0
+        je .main_loop
+        dec byte [input_len]
+        mov byte [input_err], 0
+.do_redraw:
+        call draw_board
         jmp .main_loop
 
-.illegal_move:
-        mov esi, err_illegal
-        call io_println
-        jmp .main_loop
-
-.new_game:
+.do_new:
         call init_board
+        mov byte [input_len], 0
+        mov byte [input_err], 0
         call draw_board
         jmp .main_loop
 
-.show_help:
-        mov esi, help_str
-        call io_println
+.poll_wait:
+        mov eax, SYS_SLEEP
+        mov ebx, 2
+        int 0x80
         jmp .main_loop
 
-.quit:
-        mov eax, SYS_EXIT
-        xor ebx, ebx
+.do_quit:
+        mov eax, SYS_FRAMEBUF
+        mov ebx, 2
+        int 0x80
+        xor eax, eax
         int 0x80
 
 ;=======================================
@@ -157,175 +196,216 @@ init_board:
 ;=======================================
 draw_board:
         pushad
-        mov eax, SYS_CLEAR
-        int 0x80
+
+        mov edx, 0x00222222
+        call vbe_clear_screen
 
         ; Title
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0F
-        int 0x80
-        mov esi, title_str
-        call io_println
-        call io_newline
+        mov ebx, 330
+        mov ecx, 10
+        mov edx, title_str
+        mov esi, 0x00EEEECC
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Draw rows 8 down to 1 (index 7 down to 0)
-        mov ecx, 7              ; row index
-.db_row:
-        cmp ecx, -1
-        je .db_files
+        ; Draw board squares and pieces
+        mov dword [.dbr], 0
+.db_sqrow:
+        cmp dword [.dbr], 8
+        jge .db_sq_done
+        mov dword [.dbc], 0
+.db_sqcol:
+        cmp dword [.dbc], 8
+        jge .db_sqnr
 
-        ; Row label
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E           ; Yellow
-        int 0x80
-        mov al, cl
-        add al, '1'
-        call io_putchar
-        mov al, ' '
-        call io_putchar
-
-        ; 8 squares
-        push ecx
-        xor edx, edx           ; column
-.db_col:
-        cmp edx, 8
-        jge .db_next_col
-
-        ; Determine square color
-        push ecx
-        push edx
-        mov eax, ecx
-        add eax, edx
+        ; Square color: (dbr+dbc) even=dark, odd=light
+        mov eax, [.dbr]
+        add eax, [.dbc]
         and eax, 1
-        ; EAX=1 = light square, EAX=0 = dark square
-        test eax, eax
         jz .db_dark_sq
-        mov byte [sq_bg], 0x60  ; Brown bg (light square)
-        jmp .db_sq_color_done
+        mov edi, COL_LIGHT_SQ
+        jmp .db_draw_sq
 .db_dark_sq:
-        mov byte [sq_bg], 0x20  ; Green bg (dark square)
-.db_sq_color_done:
-        pop edx
-        pop ecx
+        mov edi, COL_DARK_SQ
+.db_draw_sq:
+        ; x = dbc*CELL_SZ + BOARD_X
+        mov ebx, [.dbc]
+        imul ebx, CELL_SZ
+        add ebx, BOARD_X
+        ; y = (7-dbr)*CELL_SZ + BOARD_Y  (rank 8 at top)
+        mov eax, 7
+        sub eax, [.dbr]
+        imul eax, CELL_SZ
+        add eax, BOARD_Y
+        mov ecx, eax
+        mov edx, CELL_SZ
+        mov esi, CELL_SZ
+        call vbe_fill_rect
 
-        ; Get piece
-        push ecx
-        imul ecx, 8
-        add ecx, edx
-        movzx eax, byte [board + ecx]
-        pop ecx
-
-        ; Determine piece character and color
+        ; Draw piece if present
+        mov eax, [.dbr]
+        imul eax, 8
+        add eax, [.dbc]
+        movzx eax, byte [board + eax]
         test eax, eax
-        jz .db_empty_sq
+        jz .db_nopce
 
-        push eax
+        ; Decode piece type and color
         mov ebx, eax
         and ebx, PIECE_MASK
-        and eax, COLOR_MASK
-        push eax                ; color
-
-        ; Piece char
         dec ebx
-        movzx ebx, byte [piece_chars + ebx]
-        mov [sq_char], bl
-
-        ; Piece color: white pieces = bright white, black = black
-        pop eax
-        cmp eax, WHITE
-        jne .db_black_piece
-        movzx eax, byte [sq_bg]
-        or al, 0x0F             ; White fg
-        jmp .db_set_sq
-.db_black_piece:
-        movzx eax, byte [sq_bg]
-        or al, 0x00             ; Black fg
-        jmp .db_set_sq
-
-.db_empty_sq:
-        mov byte [sq_char], ' '
-        movzx eax, byte [sq_bg]
-
-.db_set_sq:
-        push edx
-        mov eax, SYS_SETCOLOR
-        movzx ebx, byte [sq_bg]
-        cmp byte [sq_char], ' '
-        je .db_empty_color
-        ; Recalculate color attribute for piece
-        movzx ebx, byte [board + ecx*0]  ; We need to redo this
-.db_empty_color:
-        ; Just use sq_bg for empty
-        pop edx
-
-        ; Simpler: construct color attribute
-        push ecx
-        imul ecx, 8
-        add ecx, edx
-        movzx eax, byte [board + ecx]
-        pop ecx
-
-        push edx
+        movzx edx, byte [piece_chars + ebx]   ; piece char
         mov ebx, eax
         and ebx, COLOR_MASK
-        movzx edx, byte [sq_bg]
         cmp ebx, WHITE
-        jne .db_piece_color2
-        or dl, 0x0F
-        jmp .db_piece_color_set
-.db_piece_color2:
-        cmp ebx, BLACK
-        jne .db_piece_empty
-        or dl, 0x00
-        jmp .db_piece_color_set
-.db_piece_empty:
-        ; Empty square
-        or dl, 0x00
-.db_piece_color_set:
-        mov eax, SYS_SETCOLOR
-        movzx ebx, dl
-        int 0x80
-        pop edx
+        jne .db_blk_pce
+        mov esi, COL_WHITE_PIECE
+        jmp .db_drw_pce
+.db_blk_pce:
+        mov esi, COL_BLACK_PIECE
+.db_drw_pce:
+        ; Center piece char (scale=2: 10x14px) in cell
+        mov ebx, [.dbc]
+        imul ebx, CELL_SZ
+        add ebx, BOARD_X + (CELL_SZ - 10) / 2
+        mov eax, 7
+        sub eax, [.dbr]
+        imul eax, CELL_SZ
+        add eax, BOARD_Y + (CELL_SZ - 14) / 2
+        mov ecx, eax
+        mov eax, 2
+        call vbe_draw_char
+.db_nopce:
+        inc dword [.dbc]
+        jmp .db_sqcol
+.db_sqnr:
+        inc dword [.dbr]
+        jmp .db_sqrow
 
-        ; Print: space, piece char, space (3 chars per square)
-        mov al, ' '
-        call io_putchar
-        mov al, [sq_char]
-        call io_putchar
-        mov al, ' '
-        call io_putchar
+.db_sq_done:
+        ; Rank labels 1-8 (left of board)
+        mov dword [.dbr], 0
+.db_rklbl:
+        cmp dword [.dbr], 8
+        jge .db_rk_done
+        mov eax, 7
+        sub eax, [.dbr]
+        imul eax, CELL_SZ
+        add eax, BOARD_Y + (CELL_SZ - 14) / 2
+        mov ecx, eax
+        mov ebx, BOARD_X - 22
+        mov eax, [.dbr]
+        add eax, '1'
+        mov edx, eax
+        mov esi, 0x00CCCCCC
+        mov eax, 2
+        call vbe_draw_char
+        inc dword [.dbr]
+        jmp .db_rklbl
+.db_rk_done:
 
-        inc edx
-        jmp .db_col
+        ; File labels A-H (below board)
+        mov dword [.dbc], 0
+.db_fllbl:
+        cmp dword [.dbc], 8
+        jge .db_fl_done
+        mov eax, [.dbc]
+        imul eax, CELL_SZ
+        add eax, BOARD_X + (CELL_SZ - 10) / 2
+        mov ebx, eax
+        mov ecx, BOARD_Y + 8 * CELL_SZ + 8
+        mov eax, [.dbc]
+        add eax, 'A'
+        mov edx, eax
+        mov esi, 0x00CCCCCC
+        mov eax, 2
+        call vbe_draw_char
+        inc dword [.dbc]
+        jmp .db_fllbl
+.db_fl_done:
 
-.db_next_col:
-        ; Reset color
-        mov eax, SYS_SETCOLOR
-        mov ebx, COLOR_DEFAULT
-        int 0x80
-        call io_newline
-        pop ecx
-        dec ecx
-        jmp .db_row
+        ; Right info panel: turn indicator
+        cmp byte [turn], 0
+        jne .db_black_turn
+        mov edx, str_white_move
+        jmp .db_show_turn
+.db_black_turn:
+        mov edx, str_black_move
+.db_show_turn:
+        mov ebx, BOARD_X + 8 * CELL_SZ + 20
+        mov ecx, BOARD_Y + 20
+        mov esi, 0x00EEEECC
+        mov eax, 2
+        call vbe_draw_str
 
-.db_files:
-        ; File labels
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x0E
-        int 0x80
-        mov esi, file_labels
-        call io_println
+        ; Input label
+        mov ebx, BOARD_X + 8 * CELL_SZ + 20
+        mov ecx, BOARD_Y + 80
+        mov edx, str_input
+        mov esi, 0x00AAAAAA
+        mov eax, 2
+        call vbe_draw_str
 
-        ; Game info
-        mov eax, SYS_SETCOLOR
-        mov ebx, 0x08
-        int 0x80
-        call io_newline
-        mov esi, info_str
-        call io_println
+        ; Show typed chars (or _ for untyped)
+        mov dword [.dbc], 0
+.db_inpch:
+        cmp dword [.dbc], 4
+        jge .db_inp_done
+        movzx eax, byte [input_len]
+        cmp dword [.dbc], eax
+        jl .db_inp_typed
+        mov edx, '_'
+        jmp .db_inp_show
+.db_inp_typed:
+        mov eax, [.dbc]
+        movzx edx, byte [input_buf + eax]
+        cmp dl, 'a'
+        jl .db_inp_show
+        sub dl, 0x20            ; uppercase
+.db_inp_show:
+        mov eax, [.dbc]
+        imul eax, 16
+        add eax, BOARD_X + 8 * CELL_SZ + 20
+        mov ebx, eax
+        mov ecx, BOARD_Y + 120
+        mov esi, 0x00FFFF44
+        mov eax, 2
+        call vbe_draw_char
+        inc dword [.dbc]
+        jmp .db_inpch
+.db_inp_done:
 
+        ; Error message
+        cmp byte [input_err], 0
+        je .db_no_err
+        cmp byte [input_err], 1
+        je .db_fmt_err
+        mov edx, str_illegal
+        jmp .db_show_err
+.db_fmt_err:
+        mov edx, str_invalid
+.db_show_err:
+        mov ebx, BOARD_X + 8 * CELL_SZ + 20
+        mov ecx, BOARD_Y + 160
+        mov esi, 0x00FF4444
+        mov eax, 2
+        call vbe_draw_str
+.db_no_err:
+
+        ; Controls hint
+        mov ebx, 40
+        mov ecx, 740
+        mov edx, str_hint
+        mov esi, 0x00778888
+        mov eax, 1
+        call vbe_draw_str
+
+        VBE_GAME_PRESENT
         popad
         ret
+
+.dbr:   dd 0
+.dbc:   dd 0
 
 ;=======================================
 ; parse_move: ESI=input -> sets from/to, EAX=0 ok
@@ -810,36 +890,25 @@ make_move:
         ret
 
 ; === Data ===
-; Piece display chars (CP437): King=K Queen=Q Rook=R Bishop=B kNight=N Pawn=P
+; P=pawn N=knight B=bishop R=rook Q=queen K=king
 piece_chars:    db 'P', 'N', 'B', 'R', 'Q', 'K'
 
-title_str:      db "=== Mellivora Chess ===", 0
-file_labels:    db "   a  b  c  d  e  f  g  h", 0
-prompt_white:   db "White> ", 0
-prompt_black:   db "Black> ", 0
-err_format:     db "Invalid format. Use: e2e4", 0
-err_illegal:    db "Illegal move!", 0
-info_str:       db "Enter move (e.g. e2e4), 'new', 'help', or 'quit'", 0
-cmd_quit:       db "quit", 0
-cmd_new:        db "new", 0
-cmd_help:       db "help", 0
-help_str:
-        db "=== Chess Help ===", 0x0A
-        db "Move: type source and destination squares (e.g. e2e4)", 0x0A
-        db "Files: a-h (columns left to right)", 0x0A
-        db "Ranks: 1-8 (rows bottom to top)", 0x0A
-        db "Pieces shown as letters: K Q R B N P", 0x0A
-        db "Pawns auto-promote to Queen on last rank.", 0x0A
-        db "Commands: new (restart), quit (exit)", 0
+title_str:      db "MELLIVORA CHESS", 0
+str_white_move: db "WHITE TO MOVE", 0
+str_black_move: db "BLACK TO MOVE", 0
+str_input:      db "MOVE:", 0
+str_invalid:    db "INVALID FORMAT", 0
+str_illegal:    db "ILLEGAL MOVE", 0
+str_hint:       db "TYPE E2E4 FORMAT  N=NEW  ESC=QUIT", 0
 
 ; === BSS ===
 board:          times 64 db 0
 turn:           db 0
-sq_bg:          db 0
-sq_char:        db 0
 move_count:     dd 0
 from_col:       dd 0
 from_row:       dd 0
 to_col:         dd 0
 to_row:         dd 0
-input_buf:      times 32 db 0
+input_len:      db 0
+input_err:      db 0
+input_buf:      times 8 db 0
